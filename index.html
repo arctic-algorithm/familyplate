@@ -36,9 +36,84 @@
 </head>
 <body class="bg-gray-50 text-gray-900">
   <div id="root"></div>
-  <script type="text/babel" data-type="module">
+  <!-- Set your Cloud Functions URL after deploying Firebase Functions -->
+  <!-- Example: window.CLOUD_FUNCTIONS_URL = "https://us-central1-familyplate-b4ba9.cloudfunctions.net"; -->
+  <script>window.CLOUD_FUNCTIONS_URL = "";</script>
+  <script type="text/babel">
 // ── IMPORTS & SHORTCUTS ─────────────────────────────────────────
 const { useState, useEffect, useContext, createContext, useCallback, useMemo, useRef } = React;
+
+// ── SAFE STORAGE HELPERS ─────────────────────────────────────────
+// Some browsers (iOS private mode, certain security policies) throw on storage access
+function safeSessionGet(key) { try { return sessionStorage.getItem(key); } catch(e) { return null; } }
+function safeSessionSet(key, val) { try { sessionStorage.setItem(key, val); } catch(e) {} }
+function safeLocalGet(key) { try { return localStorage.getItem(key); } catch(e) { return null; } }
+function safeLocalSet(key, val) { try { localStorage.setItem(key, val); } catch(e) {} }
+function safeLocalRemove(key) { try { localStorage.removeItem(key); } catch(e) {} }
+
+// ── PASSWORD ─────────────────────────────────────────────────────
+// Change this to update your family's password:
+const FAMILY_PASSWORD = "Bear";
+
+// ── PASSWORD GATE ────────────────────────────────────────────────
+const SESSION_KEY = 'fp_auth';
+
+function PasswordGate({ children }) {
+  const [authed, setAuthed] = useState(() => safeSessionGet(SESSION_KEY) === '1');
+  const [input, setInput] = useState('');
+  const [error, setError] = useState(false);
+  const [shake, setShake] = useState(false);
+  const inputRef = useRef(null);
+
+  useEffect(() => { if (!authed && inputRef.current) inputRef.current.focus(); }, [authed]);
+
+  function handleSubmit(e) {
+    e.preventDefault();
+    if (input === FAMILY_PASSWORD) {
+      safeSessionSet(SESSION_KEY, '1');
+      setAuthed(true);
+    } else {
+      setError(true);
+      setShake(true);
+      setInput('');
+      setTimeout(() => setShake(false), 600);
+      if (inputRef.current) inputRef.current.focus();
+    }
+  }
+
+  if (authed) return children;
+
+  return (
+    <div className="min-h-screen bg-gray-50 flex items-center justify-center p-4">
+      <div className="w-full max-w-sm">
+        <div className="text-center mb-8">
+          <div className="text-5xl mb-3">🍽️</div>
+          <h1 className="text-2xl font-bold text-gray-900">FamilyPlate</h1>
+          <p className="text-gray-500 text-sm mt-1">Family access only</p>
+        </div>
+        <form onSubmit={handleSubmit} className={`bg-white rounded-2xl shadow-sm border border-gray-100 p-6 ${shake ? 'animate-[shake_0.5s_ease-in-out]' : ''}`}>
+          <style>{`@keyframes shake{0%,100%{transform:translateX(0)}15%,45%,75%{transform:translateX(-6px)}30%,60%,90%{transform:translateX(6px)}}`}</style>
+          <label className="block text-sm font-medium text-gray-700 mb-2">Password</label>
+          <input
+            ref={inputRef}
+            type="password"
+            value={input}
+            onChange={e => { setInput(e.target.value); setError(false); }}
+            placeholder="Enter family password"
+            className={`w-full px-4 py-3 rounded-xl border text-sm outline-none transition-all ${error ? 'border-red-400 bg-red-50 focus:ring-2 focus:ring-red-200' : 'border-gray-200 focus:border-brand-500 focus:ring-2 focus:ring-brand-100'}`}
+          />
+          {error && <p className="text-red-500 text-xs mt-2">Wrong password. Try again.</p>}
+          <button
+            type="submit"
+            className="mt-4 w-full bg-brand-500 hover:bg-brand-600 text-white font-semibold py-3 rounded-xl text-sm transition-colors"
+          >
+            Unlock
+          </button>
+        </form>
+      </div>
+    </div>
+  );
+}
 
 // ── UTILITY FUNCTIONS ───────────────────────────────────────────
 const uid = () => Math.random().toString(36).slice(2, 10);
@@ -109,25 +184,157 @@ const DEFAULT_HOUSEHOLD = {
   repetitionMode: 'warn',
 };
 
-function loadState() {
+// ── FIREBASE SYNC ────────────────────────────────────────────────
+const FIREBASE_URL = 'https://familyplate-b4ba9-default-rtdb.firebaseio.com/familyplate.json';
+
+// Firebase Realtime DB converts empty arrays to null and may convert
+// arrays to objects with numeric keys ({0: …, 1: …}).  This helper
+// ensures every field the app expects as an array IS an array, and
+// nested objects (household.members, each member's preferences) are
+// also normalised.
+function normalizeFirebaseData(data) {
+  if (!data || typeof data !== 'object') return null;
+
+  // Convert Firebase object-with-numeric-keys → array, keep real arrays,
+  // and turn null / undefined → fallback.
+  function toArray(val, fallback = []) {
+    if (val === null || val === undefined) return fallback;
+    if (Array.isArray(val)) return val;
+    if (typeof val === 'object') {
+      // Firebase numeric-keyed object → array (filter out holes)
+      const keys = Object.keys(val);
+      if (keys.every(k => /^\d+$/.test(k))) {
+        return keys.sort((a,b) => +a - +b).map(k => val[k]).filter(Boolean);
+      }
+      return fallback;            // Not a numeric-keyed object
+    }
+    return fallback;
+  }
+
+  const meals = toArray(data.meals);
+  const restaurants = toArray(data.restaurants);
+
+  // Normalise each meal's tags and history arrays
+  const normMeals = meals.map(m => ({
+    ...m,
+    tags: toArray(m.tags),
+    history: toArray(m.history),
+  }));
+
+  // Normalise household members & their nested preference arrays
+  let household = data.household || DEFAULT_HOUSEHOLD;
+  if (household) {
+    const members = toArray(household.members, DEFAULT_HOUSEHOLD.members);
+    household = {
+      ...DEFAULT_HOUSEHOLD,
+      ...household,
+      members: members.map(mem => ({
+        ...mem,
+        preferences: {
+          dietary:   toArray(mem.preferences?.dietary),
+          dislikes:  toArray(mem.preferences?.dislikes),
+          allergens: toArray(mem.preferences?.allergens),
+        },
+      })),
+    };
+  }
+
+  // Normalise restaurant openDays arrays
+  const normRestaurants = restaurants.map(r => ({
+    ...r,
+    openDays: toArray(r.openDays),
+  }));
+
+  // Normalise emailSettings
+  let emailSettings = data.emailSettings || EMPTY_STATE.emailSettings;
+  if (emailSettings) {
+    emailSettings = {
+      ...EMPTY_STATE.emailSettings,
+      ...emailSettings,
+      familyEmails: toArray(emailSettings.familyEmails),
+      confirmations: emailSettings.confirmations || {},
+    };
+  }
+
+  return {
+    ...data,
+    meals: normMeals,
+    restaurants: normRestaurants,
+    household,
+    plans: data.plans || {},
+    onboarded: !!data.onboarded,
+    emailSettings,
+  };
+}
+
+async function loadFromFirebase() {
   try {
-    const raw = localStorage.getItem('familyplate');
-    if (raw) return JSON.parse(raw);
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 5000); // 5-second timeout
+    const res = await fetch(FIREBASE_URL, { signal: controller.signal });
+    clearTimeout(timer);
+    if (!res.ok) return null;
+    const raw = await res.json();
+    const data = normalizeFirebaseData(raw);
+    if (data) safeLocalSet('familyplate', JSON.stringify(data)); // cache locally
+    return data;
+  } catch(e) {
+    console.warn('[FamilyPlate] Firebase load failed, using local cache:', e.message);
+    return null;
+  }
+}
+
+let _saveTimer = null;
+function saveState(state) {
+  // Write to localStorage immediately for fast local access
+  safeLocalSet('familyplate', JSON.stringify(state));
+  // Debounce Firebase writes to avoid hammering on rapid changes
+  clearTimeout(_saveTimer);
+  _saveTimer = setTimeout(() => {
+    const ctrl = new AbortController();
+    setTimeout(() => ctrl.abort(), 8000);
+    fetch(FIREBASE_URL, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(state),
+      signal: ctrl.signal,
+    }).catch(() => {});
+  }, 1000);
+}
+
+function loadCachedState() {
+  try {
+    const raw = safeLocalGet('familyplate');
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      return normalizeFirebaseData(parsed) || parsed;
+    }
   } catch(e) {}
   return null;
 }
 
-function saveState(state) {
-  try { localStorage.setItem('familyplate', JSON.stringify(state)); } catch(e) {}
-}
+const TIMEZONES = [
+  'America/New_York','America/Chicago','America/Denver','America/Los_Angeles',
+  'America/Anchorage','Pacific/Honolulu','America/Phoenix',
+  'Europe/London','Europe/Paris','Europe/Berlin','Europe/Moscow',
+  'Asia/Tokyo','Asia/Shanghai','Asia/Kolkata','Asia/Dubai',
+  'Australia/Sydney','Australia/Perth','Pacific/Auckland',
+];
 
-const INITIAL_STATE = loadState() || {
+const EMPTY_STATE = {
   household: DEFAULT_HOUSEHOLD,
   meals: [],
   restaurants: [],
   plans: {},  // { 'YYYY-MM-DD': { breakfast: SlotData, lunch: SlotData, dinner: SlotData } }
   onboarded: false,
+  emailSettings: {
+    familyEmails: [],   // [{id, name, email, enabled}]
+    timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || 'America/New_York',
+    confirmations: {},  // { 'YYYY-MM-DD': { confirmed: true, timestamp: string } }
+  },
 };
+
+const INITIAL_STATE = loadCachedState() || EMPTY_STATE;
 
 const AppContext = createContext();
 
@@ -157,6 +364,9 @@ const Icon = ({name, size=20, className=''}) => {
     check: <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>,
     menu: <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="18" x2="21" y2="18"/></svg>,
     shuffle: <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="16 3 21 3 21 8"/><line x1="4" y1="20" x2="21" y2="3"/><polyline points="21 16 21 21 16 21"/><line x1="15" y1="15" x2="21" y2="21"/><line x1="4" y1="4" x2="9" y2="9"/></svg>,
+    mail: <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><polyline points="22,6 12,13 2,6"/></svg>,
+    globe: <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>,
+    send: <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>,
   };
   return <span className={className}>{icons[name] || null}</span>;
 };
@@ -250,15 +460,29 @@ const Onboarding = () => {
 };
 
 // ── MEAL SLOT COMPONENT ─────────────────────────────────────────
-const MealSlot = ({date, slotType, plan, onAdd, onRemove, onSuggest, compact}) => {
+const MealSlot = ({date, slotType, plan, onAdd, onRemove, onSuggest, compact, dragSource, onDragStart, onDragEnd, onDrop}) => {
   const { state } = useApp();
   const slot = plan?.[slotType];
   const slotLabel = slotType === 'breakfast' ? 'B' : slotType === 'lunch' ? 'L' : 'D';
   const slotFull = slotType === 'breakfast' ? 'Breakfast' : slotType === 'lunch' ? 'Lunch' : 'Dinner';
+  const [isDragOver, setIsDragOver] = useState(false);
+
+  const isSelf = dragSource && dragSource.date === date && dragSource.slot === slotType;
+  const isDragging = !!dragSource;
+
+  const dropHandlers = {
+    onDragOver: e => { e.preventDefault(); if (!isSelf) setIsDragOver(true); },
+    onDragLeave: () => setIsDragOver(false),
+    onDrop: e => { e.preventDefault(); setIsDragOver(false); if (!isSelf) onDrop(date, slotType); },
+  };
 
   if (!slot || slot.type === 'empty') {
     return (
-      <div className={`group border border-dashed border-gray-200 rounded-xl hover:border-brand-400 hover:bg-brand-50/30 transition cursor-pointer ${compact?'p-2':'p-3'}`} onClick={()=>onAdd(date, slotType)}>
+      <div
+        {...dropHandlers}
+        className={`group border border-dashed rounded-xl transition cursor-pointer ${compact?'p-2':'p-3'} ${isDragOver ? 'border-brand-400 bg-brand-50 scale-[1.02]' : 'border-gray-200 hover:border-brand-400 hover:bg-brand-50/30'}`}
+        onClick={()=>{ if (!isDragging) onAdd(date, slotType); }}
+      >
         <div className="flex items-center justify-between">
           {!compact && <span className="text-xs font-medium text-gray-400 uppercase">{slotFull}</span>}
           <div className="flex gap-1">
@@ -268,7 +492,7 @@ const MealSlot = ({date, slotType, plan, onAdd, onRemove, onSuggest, compact}) =
             <span className="p-1 rounded-md opacity-0 group-hover:opacity-100 text-gray-400"><Icon name="plus" size={14} /></span>
           </div>
         </div>
-        {compact && <span className="text-xs text-gray-300">{slotLabel}</span>}
+        {compact && <span className="text-xs text-gray-300">{isDragOver ? '↓' : slotLabel}</span>}
       </div>
     );
   }
@@ -280,12 +504,18 @@ const MealSlot = ({date, slotType, plan, onAdd, onRemove, onSuggest, compact}) =
   const name = item?.name || 'Unknown';
 
   // Repetition check
-  const window = state.household.repetitionWindow;
+  const rWin = state.household.repetitionWindow;
   const lastPlanned = isHome ? getLastPlanned(state.plans, slot.mealId, date) : getLastPlannedRestaurant(state.plans, slot.mealId, date);
-  const withinWindow = lastPlanned && daysSince(lastPlanned) < window && lastPlanned !== date;
+  const withinWindow = lastPlanned && daysSince(lastPlanned) < rWin && lastPlanned !== date;
 
   return (
-    <div className={`rounded-xl border transition relative group ${compact?'p-2':'p-3'} ${isHome?'bg-home-light/50 border-home/20':'bg-restaurant-light/50 border-restaurant/20'}`}>
+    <div
+      draggable
+      onDragStart={() => onDragStart(date, slotType)}
+      onDragEnd={onDragEnd}
+      {...dropHandlers}
+      className={`rounded-xl border transition relative group ${compact?'p-2':'p-3'} ${isHome?'bg-home-light/50 border-home/20':'bg-restaurant-light/50 border-restaurant/20'} ${isSelf ? 'opacity-40 scale-95' : ''} ${isDragOver ? 'ring-2 ring-brand-400 scale-[1.02]' : ''} cursor-grab active:cursor-grabbing`}
+    >
       <div className="flex items-start justify-between gap-1">
         <div className="min-w-0 flex-1">
           {!compact && <span className="text-xs font-medium uppercase text-gray-400 block mb-0.5">{slotFull}</span>}
@@ -297,7 +527,7 @@ const MealSlot = ({date, slotType, plan, onAdd, onRemove, onSuggest, compact}) =
         </button>
       </div>
       {withinWindow && (
-        <div className="flex items-center gap-1 mt-1.5 text-amber-600" title={`Last planned ${daysSince(lastPlanned)} days ago (window: ${window} days)`}>
+        <div className="flex items-center gap-1 mt-1.5 text-amber-600" title={`Last planned ${daysSince(lastPlanned)} days ago (window: ${rWin} days)`}>
           <Icon name="alert" size={12} />
           <span className="text-xs font-medium">Repeat</span>
         </div>
@@ -335,16 +565,19 @@ const AddMealModal = ({open, onClose, date, slotType, onSelect}) => {
   const [tab, setTab] = useState('home');
   const [search, setSearch] = useState('');
   const [quickName, setQuickName] = useState('');
-  const [perPerson, setPerPerson] = useState(false);
-  const [assignments, setAssignments] = useState({});
 
   const filteredMeals = useMemo(() => {
     return state.meals.filter(m => m.name.toLowerCase().includes(search.toLowerCase()) || m.cuisine.toLowerCase().includes(search.toLowerCase()));
   }, [state.meals, search]);
 
+  const dateDayName = dayName(date);
   const filteredRestaurants = useMemo(() => {
-    return state.restaurants.filter(r => r.name.toLowerCase().includes(search.toLowerCase()));
-  }, [state.restaurants, search]);
+    return state.restaurants.filter(r => {
+      if (!r.name.toLowerCase().includes(search.toLowerCase())) return false;
+      if (r.openDays && !r.openDays.includes(dateDayName)) return false;
+      return true;
+    });
+  }, [state.restaurants, search, dateDayName]);
 
   const quickAdd = () => {
     if (!quickName.trim()) return;
@@ -355,19 +588,8 @@ const AddMealModal = ({open, onClose, date, slotType, onSelect}) => {
     onClose();
   };
 
-  const selectMeal = (mealId) => {
-    if (perPerson) {
-      onSelect(date, slotType, 'home', mealId, assignments);
-    } else {
-      onSelect(date, slotType, 'home', mealId);
-    }
-    onClose();
-  };
-
-  const selectRestaurant = (restId) => {
-    onSelect(date, slotType, 'restaurant', restId);
-    onClose();
-  };
+  const selectMeal = (mealId) => { onSelect(date, slotType, 'home', mealId); onClose(); };
+  const selectRestaurant = (restId) => { onSelect(date, slotType, 'restaurant', restId); onClose(); };
 
   const slotFull = slotType === 'breakfast' ? 'Breakfast' : slotType === 'lunch' ? 'Lunch' : 'Dinner';
 
@@ -391,20 +613,12 @@ const AddMealModal = ({open, onClose, date, slotType, onSelect}) => {
         <input value={search} onChange={e=>setSearch(e.target.value)} className="w-full pl-9 pr-4 py-2 border border-gray-200 rounded-xl text-sm focus:ring-2 focus:ring-brand-500 outline-none" placeholder={`Search ${tab==='home'?'meals':'restaurants'}...`} />
       </div>
 
-      {/* Per-person toggle */}
-      {tab === 'home' && (
-        <label className="flex items-center gap-2 mb-3 text-sm text-gray-600 cursor-pointer">
-          <input type="checkbox" checked={perPerson} onChange={e=>setPerPerson(e.target.checked)} className="rounded border-gray-300 text-brand-500 focus:ring-brand-500" />
-          Set different meals per person
-        </label>
-      )}
-
       {/* List */}
       <div className="space-y-2 max-h-[40vh] overflow-y-auto">
         {tab === 'home' && filteredMeals.map(m => {
-          const window = state.household.repetitionWindow;
+          const rWin = state.household.repetitionWindow;
           const last = getLastPlanned(state.plans, m.id, date);
-          const withinWindow = last && daysSince(last) < window;
+          const withinWindow = last && daysSince(last) < rWin;
           const blocked = withinWindow && state.household.repetitionMode === 'block';
           return (
             <button key={m.id} onClick={()=>!blocked&&selectMeal(m.id)} disabled={blocked}
@@ -430,7 +644,13 @@ const AddMealModal = ({open, onClose, date, slotType, onSelect}) => {
           </button>
         ))}
         {tab === 'home' && filteredMeals.length === 0 && <p className="text-sm text-gray-400 text-center py-8">No meals found. Add one with quick-add above!</p>}
-        {tab === 'restaurant' && filteredRestaurants.length === 0 && <p className="text-sm text-gray-400 text-center py-8">No restaurants saved yet. Add one from the Restaurants tab.</p>}
+        {tab === 'restaurant' && filteredRestaurants.length === 0 && (
+          <p className="text-sm text-gray-400 text-center py-8">
+            {state.restaurants.length === 0
+              ? 'No restaurants saved yet. Add one from the Restaurants tab.'
+              : `No restaurants open on ${dateDayName}. Edit a restaurant to update its open days.`}
+          </p>
+        )}
       </div>
     </Modal>
   );
@@ -442,7 +662,7 @@ const SuggestModal = ({open, onClose, date, slotType, onSelect}) => {
   const [suggestions, setSuggestions] = useState([]);
 
   const generateSuggestions = useCallback(() => {
-    const window = state.household.repetitionWindow;
+    const rWin = state.household.repetitionWindow;
     const weekDates = getWeekDates(0);
     const weekCuisines = {};
     weekDates.forEach(d => {
@@ -458,7 +678,7 @@ const SuggestModal = ({open, onClose, date, slotType, onSelect}) => {
 
     const eligible = state.meals.filter(m => {
       const last = getLastPlanned(state.plans, m.id, date);
-      return !last || daysSince(last) >= window;
+      return !last || daysSince(last) >= rWin;
     });
 
     // Score: prefer underrepresented cuisines, variety
@@ -506,7 +726,8 @@ const WeeklyCalendar = () => {
   const [mobileDay, setMobileDay] = useState(0);
 
   const dates = useMemo(() => getWeekDates(weekOffset), [weekOffset]);
-  const isMobile = typeof window !== 'undefined' && window.innerWidth < 768;
+
+  const [dragSource, setDragSource] = useState(null);
 
   const handleSelect = (date, slot, type, mealId, perPerson) => {
     dispatch({type:'SET_SLOT', payload:{date, slot, data:{type, mealId, perPerson: perPerson || null}}});
@@ -514,6 +735,15 @@ const WeeklyCalendar = () => {
   const handleRemove = (date, slot) => {
     dispatch({type:'SET_SLOT', payload:{date, slot, data:{type:'empty'}}});
   };
+  const handleDragStart = (date, slot) => setDragSource({ date, slot });
+  const handleDragEnd = () => setDragSource(null);
+  const handleDrop = (toDate, toSlot) => {
+    if (!dragSource) return;
+    dispatch({ type: 'SWAP_SLOTS', payload: { from: dragSource, to: { date: toDate, slot: toSlot } } });
+    setDragSource(null);
+  };
+
+  const slotProps = { dragSource, onDragStart: handleDragStart, onDragEnd: handleDragEnd, onDrop: handleDrop };
 
   const todayStr = today();
   const isThisWeek = dates.includes(todayStr);
@@ -550,7 +780,8 @@ const WeeklyCalendar = () => {
                     <MealSlot key={s} date={d} slotType={s} plan={plan} compact
                       onAdd={(date,slot)=>setAddModal({date,slot})}
                       onRemove={handleRemove}
-                      onSuggest={(date,slot)=>setSuggestModal({date,slot})} />
+                      onSuggest={(date,slot)=>setSuggestModal({date,slot})}
+                      {...slotProps} />
                   ))}
                 </div>
               </div>
@@ -584,7 +815,8 @@ const WeeklyCalendar = () => {
                 <MealSlot key={s} date={d} slotType={s} plan={plan}
                   onAdd={(date,slot)=>setAddModal({date,slot})}
                   onRemove={handleRemove}
-                  onSuggest={(date,slot)=>setSuggestModal({date,slot})} />
+                  onSuggest={(date,slot)=>setSuggestModal({date,slot})}
+                  {...slotProps} />
               ))}
             </div>
           );
@@ -826,10 +1058,19 @@ const RestaurantCard = ({restaurant: r, onEdit}) => {
         </div>
       </div>
       <p className="text-sm text-gray-400">{r.cuisine} · {r.priceRange}</p>
+      {r.openDays && r.openDays.length < 7 && (
+        <div className="flex gap-0.5 mt-2">
+          {ALL_DAYS.map(d => (
+            <span key={d} className={`text-[10px] px-1.5 py-0.5 rounded font-medium ${r.openDays.includes(d) ? 'bg-restaurant-light text-restaurant-dark' : 'bg-gray-100 text-gray-300 line-through'}`}>{d}</span>
+          ))}
+        </div>
+      )}
       {r.notes && <p className="text-sm text-gray-500 mt-2 line-clamp-2">{r.notes}</p>}
     </div>
   );
 };
+
+const ALL_DAYS = ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
 
 const RestaurantForm = ({open, onClose, restaurant}) => {
   const { dispatch } = useApp();
@@ -838,10 +1079,15 @@ const RestaurantForm = ({open, onClose, restaurant}) => {
   const [priceRange, setPriceRange] = useState(restaurant?.priceRange || '$$');
   const [notes, setNotes] = useState(restaurant?.notes || '');
   const [isFavorite, setIsFavorite] = useState(restaurant?.isFavorite || false);
+  const [openDays, setOpenDays] = useState(restaurant?.openDays || ALL_DAYS);
+
+  const toggleDay = (day) => setOpenDays(prev =>
+    prev.includes(day) ? prev.filter(d => d !== day) : [...prev, day]
+  );
 
   const save = () => {
     if (!name.trim()) return;
-    const data = { name: name.trim(), cuisine, priceRange, notes, isFavorite };
+    const data = { name: name.trim(), cuisine, priceRange, notes, isFavorite, openDays };
     if (restaurant) {
       dispatch({type:'UPDATE_RESTAURANT', payload:{id: restaurant.id, ...data}});
     } else {
@@ -874,6 +1120,18 @@ const RestaurantForm = ({open, onClose, restaurant}) => {
           </div>
         </div>
         <div>
+          <label className="text-sm font-medium text-gray-700 mb-2 block">Open Days</label>
+          <div className="flex gap-1">
+            {ALL_DAYS.map(day => (
+              <button key={day} type="button" onClick={()=>toggleDay(day)}
+                className={`flex-1 py-2 rounded-lg text-xs font-medium transition border ${openDays.includes(day) ? 'bg-restaurant text-white border-restaurant' : 'bg-white text-gray-400 border-gray-200 hover:border-gray-300'}`}>
+                {day}
+              </button>
+            ))}
+          </div>
+          {openDays.length === 0 && <p className="text-xs text-amber-500 mt-1">Select at least one open day.</p>}
+        </div>
+        <div>
           <label className="text-sm font-medium text-gray-700 mb-1 block">Notes</label>
           <textarea value={notes} onChange={e=>setNotes(e.target.value)} rows={2} className="w-full px-4 py-2.5 border border-gray-200 rounded-xl text-sm focus:ring-2 focus:ring-restaurant outline-none resize-none" placeholder="Optional notes..." />
         </div>
@@ -889,17 +1147,113 @@ const RestaurantForm = ({open, onClose, restaurant}) => {
   );
 };
 
+// ── EMAIL VALIDATION ─────────────────────────────────────────────
+function isValidEmail(email) {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
+}
+
 // ── SETTINGS PAGE ───────────────────────────────────────────────
 const Settings = () => {
   const { state, dispatch } = useApp();
   const h = state.household;
+  const es = state.emailSettings || EMPTY_STATE.emailSettings;
 
   const updateHousehold = (updates) => dispatch({type:'UPDATE_HOUSEHOLD', payload: updates});
   const updateMember = (id, updates) => dispatch({type:'UPDATE_MEMBER', payload:{id, ...updates}});
 
+  // Email form state
+  const [emailName, setEmailName] = useState('');
+  const [emailAddr, setEmailAddr] = useState('');
+  const [emailError, setEmailError] = useState('');
+  const [editingEmail, setEditingEmail] = useState(null);
+  const [testSending, setTestSending] = useState(false);
+  const [testResult, setTestResult] = useState(null);
+
+  const addOrUpdateEmail = () => {
+    const trimName = emailName.trim();
+    const trimEmail = emailAddr.trim().toLowerCase();
+    if (!trimName) { setEmailError('Name is required'); return; }
+    if (!trimEmail) { setEmailError('Email is required'); return; }
+    if (!isValidEmail(trimEmail)) { setEmailError('Invalid email address'); return; }
+    // Check for duplicates (excluding the one being edited)
+    const isDupe = (es.familyEmails||[]).some(e => e.email === trimEmail && e.id !== editingEmail);
+    if (isDupe) { setEmailError('This email is already added'); return; }
+
+    if (editingEmail) {
+      dispatch({type:'UPDATE_FAMILY_EMAIL', payload:{id: editingEmail, name: trimName, email: trimEmail}});
+      setEditingEmail(null);
+    } else {
+      dispatch({type:'ADD_FAMILY_EMAIL', payload:{id: uid(), name: trimName, email: trimEmail, enabled: true}});
+    }
+    setEmailName(''); setEmailAddr(''); setEmailError('');
+  };
+
+  const startEditEmail = (e) => {
+    setEditingEmail(e.id);
+    setEmailName(e.name);
+    setEmailAddr(e.email);
+    setEmailError('');
+  };
+
+  const cancelEdit = () => {
+    setEditingEmail(null);
+    setEmailName(''); setEmailAddr(''); setEmailError('');
+  };
+
+  const sendTestEmail = async () => {
+    setTestSending(true); setTestResult(null);
+    try {
+      // This calls the Cloud Function test endpoint
+      const functionsBase = window.CLOUD_FUNCTIONS_URL || '';
+      if (!functionsBase) {
+        setTestResult({ok: false, msg: 'Cloud Functions URL not configured. Set window.CLOUD_FUNCTIONS_URL.'});
+        setTestSending(false);
+        return;
+      }
+      const res = await fetch(`${functionsBase}/sendTestEmail`, {
+        method: 'POST',
+        headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({firebaseUrl: FIREBASE_URL}),
+      });
+      const data = await res.json();
+      setTestResult({ok: data.success, msg: data.message || (data.success ? 'Test emails sent!' : 'Failed to send.')});
+    } catch(err) {
+      setTestResult({ok: false, msg: 'Could not reach Cloud Functions. Check your setup.'});
+    }
+    setTestSending(false);
+  };
+
+  // Yesterday's confirmation status
+  const yesterday = (() => {
+    const d = new Date();
+    d.setDate(d.getDate() - 1);
+    return d.toISOString().split('T')[0];
+  })();
+  const yesterdayConfirmed = es.confirmations?.[yesterday]?.confirmed;
+
   return (
     <div className="fade-in max-w-2xl">
       <h1 className="text-2xl font-bold mb-6">Settings</h1>
+
+      {/* Yesterday's Confirmation Banner */}
+      {!yesterdayConfirmed && (
+        <section className="bg-brand-50 border border-brand-200 rounded-2xl p-4 mb-6 flex items-center justify-between">
+          <div>
+            <p className="text-sm font-medium text-brand-700">Were yesterday's meals correct?</p>
+            <p className="text-xs text-brand-500 mt-0.5">Confirm that the plan for {new Date(yesterday+'T12:00:00').toLocaleDateString('en-US',{weekday:'long', month:'short', day:'numeric'})} was followed.</p>
+          </div>
+          <button
+            onClick={() => dispatch({type:'CONFIRM_DAY', payload: yesterday})}
+            className="px-4 py-2 bg-brand-500 text-white rounded-xl text-sm font-medium hover:bg-brand-600 transition flex items-center gap-1.5 shrink-0"
+          ><Icon name="check" size={16} /> Confirm</button>
+        </section>
+      )}
+      {yesterdayConfirmed && (
+        <section className="bg-green-50 border border-green-200 rounded-2xl p-4 mb-6 flex items-center gap-3">
+          <span className="text-green-600"><Icon name="check" size={20} /></span>
+          <p className="text-sm text-green-700">Yesterday's meals confirmed <span className="text-green-500">({new Date(es.confirmations[yesterday].timestamp).toLocaleTimeString()})</span></p>
+        </section>
+      )}
 
       {/* Household */}
       <section className="bg-white rounded-2xl border border-gray-100 p-6 mb-6">
@@ -943,6 +1297,95 @@ const Settings = () => {
         </div>
       </section>
 
+      {/* Email Reminders */}
+      <section className="bg-white rounded-2xl border border-gray-100 p-6 mb-6">
+        <h2 className="font-semibold text-lg mb-1 flex items-center gap-2"><Icon name="mail" size={20} /> Email Reminders</h2>
+        <p className="text-xs text-gray-400 mb-4">Send daily meal summaries to family members every morning at 8 AM.</p>
+
+        {/* Timezone */}
+        <div className="mb-5">
+          <label className="text-sm font-medium text-gray-700 mb-1.5 flex items-center gap-1.5 block"><Icon name="globe" size={14} /> Timezone</label>
+          <select
+            value={es.timezone}
+            onChange={e => dispatch({type:'SET_TIMEZONE', payload: e.target.value})}
+            className="w-full px-4 py-2.5 border border-gray-200 rounded-xl text-sm focus:ring-2 focus:ring-brand-500 outline-none bg-white"
+          >
+            {TIMEZONES.map(tz => <option key={tz} value={tz}>{tz.replace(/_/g,' ')}</option>)}
+          </select>
+          <p className="text-xs text-gray-400 mt-1">Emails will be sent at 8:00 AM in this timezone.</p>
+        </div>
+
+        {/* Family email list */}
+        <div className="mb-4">
+          <label className="text-sm font-medium text-gray-700 mb-2 block">Family Members</label>
+          {(es.familyEmails||[]).length === 0 && (
+            <p className="text-sm text-gray-400 mb-3 py-4 text-center bg-gray-50 rounded-xl">No email recipients yet. Add family members below.</p>
+          )}
+          <div className="space-y-2 mb-4">
+            {(es.familyEmails||[]).map(fe => (
+              <div key={fe.id} className="flex items-center gap-3 p-3 bg-gray-50 rounded-xl group">
+                <button
+                  onClick={() => dispatch({type:'UPDATE_FAMILY_EMAIL', payload:{id:fe.id, enabled: !fe.enabled}})}
+                  className={`w-10 h-6 rounded-full transition-colors relative shrink-0 ${fe.enabled ? 'bg-brand-500' : 'bg-gray-300'}`}
+                >
+                  <span className={`absolute top-0.5 w-5 h-5 bg-white rounded-full shadow transition-transform ${fe.enabled ? 'left-[18px]' : 'left-0.5'}`} />
+                </button>
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm font-medium text-gray-800 truncate">{fe.name}</p>
+                  <p className="text-xs text-gray-400 truncate">{fe.email}</p>
+                </div>
+                <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition">
+                  <button onClick={() => startEditEmail(fe)} className="p-1.5 rounded-lg hover:bg-white text-gray-400 hover:text-gray-600"><Icon name="edit" size={14} /></button>
+                  <button onClick={() => { if(confirm(`Remove ${fe.name}?`)) dispatch({type:'REMOVE_FAMILY_EMAIL', payload:fe.id}); }} className="p-1.5 rounded-lg hover:bg-red-50 text-gray-400 hover:text-red-500"><Icon name="trash" size={14} /></button>
+                </div>
+              </div>
+            ))}
+          </div>
+
+          {/* Add/Edit email form */}
+          <div className="p-4 border border-dashed border-gray-200 rounded-xl bg-gray-50/50">
+            <p className="text-xs font-medium text-gray-500 mb-2">{editingEmail ? 'Edit recipient' : 'Add new recipient'}</p>
+            <div className="flex flex-col sm:flex-row gap-2">
+              <input
+                value={emailName} onChange={e => {setEmailName(e.target.value); setEmailError('');}}
+                placeholder="Name" className="flex-1 px-3 py-2 bg-white border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-brand-500 outline-none"
+              />
+              <input
+                value={emailAddr} onChange={e => {setEmailAddr(e.target.value); setEmailError('');}}
+                placeholder="email@example.com" type="email"
+                className="flex-1 px-3 py-2 bg-white border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-brand-500 outline-none"
+                onKeyDown={e => { if (e.key === 'Enter') addOrUpdateEmail(); }}
+              />
+              <div className="flex gap-2">
+                <button onClick={addOrUpdateEmail}
+                  className="px-4 py-2 bg-brand-500 text-white rounded-lg text-sm font-medium hover:bg-brand-600 transition">
+                  {editingEmail ? 'Update' : 'Add'}
+                </button>
+                {editingEmail && (
+                  <button onClick={cancelEdit} className="px-3 py-2 text-sm text-gray-500 hover:bg-gray-100 rounded-lg transition">Cancel</button>
+                )}
+              </div>
+            </div>
+            {emailError && <p className="text-red-500 text-xs mt-1.5">{emailError}</p>}
+          </div>
+        </div>
+
+        {/* Test email button */}
+        <div className="flex items-center gap-3 pt-2 border-t border-gray-100">
+          <button
+            onClick={sendTestEmail}
+            disabled={testSending || (es.familyEmails||[]).filter(e=>e.enabled).length === 0}
+            className="px-4 py-2.5 text-sm font-medium border border-brand-200 text-brand-600 rounded-xl hover:bg-brand-50 transition disabled:opacity-40 flex items-center gap-2"
+          >
+            <Icon name="send" size={14} />
+            {testSending ? 'Sending...' : 'Send Test Email'}
+          </button>
+          {testResult && (
+            <p className={`text-xs ${testResult.ok ? 'text-green-600' : 'text-red-500'}`}>{testResult.msg}</p>
+          )}
+        </div>
+      </section>
+
       {/* Repetition Avoidance */}
       <section className="bg-white rounded-2xl border border-gray-100 p-6 mb-6">
         <h2 className="font-semibold text-lg mb-4">Repetition Avoidance</h2>
@@ -975,7 +1418,7 @@ const Settings = () => {
       <section className="bg-white rounded-2xl border border-gray-100 p-6">
         <h2 className="font-semibold text-lg mb-4">Data</h2>
         <div className="flex gap-3">
-          <button onClick={()=>{if(confirm('Reset all data? This cannot be undone.')){localStorage.removeItem('familyplate');location.reload();}}}
+          <button onClick={()=>{if(confirm('Reset all data? This cannot be undone.')){safeLocalRemove('familyplate');fetch(FIREBASE_URL,{method:'DELETE'}).finally(()=>location.reload());}}}
             className="px-4 py-2.5 text-sm text-red-600 border border-red-200 rounded-xl hover:bg-red-50 transition">Reset All Data</button>
         </div>
       </section>
@@ -1039,6 +1482,10 @@ const MobileHeader = ({page, onMenuToggle}) => (
 // ── REDUCER ─────────────────────────────────────────────────────
 function appReducer(state, action) {
   switch(action.type) {
+    case 'LOAD': {
+      const normalized = normalizeFirebaseData(action.payload) || action.payload;
+      return {...EMPTY_STATE, ...normalized};
+    }
     case 'SETUP': return {...state, ...action.payload};
     case 'ADD_MEAL': return {...state, meals: [...state.meals, action.payload]};
     case 'UPDATE_MEAL': return {...state, meals: state.meals.map(m => m.id===action.payload.id ? {...m,...action.payload} : m)};
@@ -1054,10 +1501,41 @@ function appReducer(state, action) {
       plans[date] = {...plans[date], [slot]: data};
       return {...state, plans};
     }
+    case 'SWAP_SLOTS': {
+      const { from, to } = action.payload;
+      const fromData = state.plans[from.date]?.[from.slot] || { type: 'empty' };
+      const toData   = state.plans[to.date]?.[to.slot]   || { type: 'empty' };
+      const plans = { ...state.plans };
+      if (!plans[from.date]) plans[from.date] = {};
+      if (!plans[to.date])   plans[to.date]   = {};
+      plans[from.date] = { ...plans[from.date], [from.slot]: toData };
+      plans[to.date]   = { ...plans[to.date],   [to.slot]:   fromData };
+      return { ...state, plans };
+    }
     case 'UPDATE_HOUSEHOLD': return {...state, household: {...state.household, ...action.payload}};
     case 'UPDATE_MEMBER': {
       const {id, ...updates} = action.payload;
       return {...state, household: {...state.household, members: state.household.members.map(m => m.id===id ? {...m,...updates} : m)}};
+    }
+    case 'ADD_FAMILY_EMAIL': {
+      const es = state.emailSettings || EMPTY_STATE.emailSettings;
+      return {...state, emailSettings: {...es, familyEmails: [...(es.familyEmails||[]), action.payload]}};
+    }
+    case 'UPDATE_FAMILY_EMAIL': {
+      const es = state.emailSettings || EMPTY_STATE.emailSettings;
+      return {...state, emailSettings: {...es, familyEmails: (es.familyEmails||[]).map(e => e.id===action.payload.id ? {...e,...action.payload} : e)}};
+    }
+    case 'REMOVE_FAMILY_EMAIL': {
+      const es = state.emailSettings || EMPTY_STATE.emailSettings;
+      return {...state, emailSettings: {...es, familyEmails: (es.familyEmails||[]).filter(e => e.id !== action.payload)}};
+    }
+    case 'SET_TIMEZONE': {
+      const es = state.emailSettings || EMPTY_STATE.emailSettings;
+      return {...state, emailSettings: {...es, timezone: action.payload}};
+    }
+    case 'CONFIRM_DAY': {
+      const es = state.emailSettings || EMPTY_STATE.emailSettings;
+      return {...state, emailSettings: {...es, confirmations: {...(es.confirmations||{}), [action.payload]: {confirmed: true, timestamp: new Date().toISOString()}}}};
     }
     default: return state;
   }
@@ -1067,9 +1545,37 @@ function appReducer(state, action) {
 const App = () => {
   const [state, dispatch] = React.useReducer(appReducer, INITIAL_STATE);
   const [page, setPage] = useState('calendar');
+  const [syncing, setSyncing] = useState(true);
 
-  // Persist to localStorage on every state change
-  useEffect(() => { saveState(state); }, [state]);
+  // Handle deep links from email (e.g., ?date=2026-03-18&addSlot=breakfast)
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    if (params.has('date') || params.has('addSlot')) {
+      setPage('calendar');
+      // Clean URL without reloading
+      window.history.replaceState({}, '', window.location.pathname);
+    }
+  }, []);
+
+  // On mount, fetch latest data from Firebase (authoritative source)
+  useEffect(() => {
+    loadFromFirebase().then(data => {
+      if (data) dispatch({ type: 'LOAD', payload: data });
+      setSyncing(false);
+    }).catch(() => setSyncing(false));
+  }, []);
+
+  // Persist to localStorage + Firebase on every state change
+  useEffect(() => { if (!syncing) saveState(state); }, [state]);
+
+  if (syncing) return (
+    <div className="min-h-screen bg-gray-50 flex items-center justify-center">
+      <div className="text-center">
+        <div className="text-4xl mb-3">🍽️</div>
+        <p className="text-gray-500 text-sm">Loading family data…</p>
+      </div>
+    </div>
+  );
 
   if (!state.onboarded) {
     return (
@@ -1102,7 +1608,7 @@ const App = () => {
 
 // ── RENDER ──────────────────────────────────────────────────────
 const root = ReactDOM.createRoot(document.getElementById('root'));
-root.render(<App />);
+root.render(<PasswordGate><App /></PasswordGate>);
   </script>
 </body>
 </html>
