@@ -1,1 +1,8 @@
-{"buildCommand":"","outputDirectory":".","framework":null,"rewrites":[{"source":"/(.*)","destination":"/index.html"}]}
+{
+  "buildCommand": "",
+  "outputDirectory": ".",
+  "framework": null,
+  "rewrites": [
+    { "source": "/(.*)", "destination": "/index.html" }
+  ]
+}

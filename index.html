@@ -1,0 +1,1368 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>FamilyPlate — Family Meal Planner</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🍽️</text></svg>" />
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          colors: {
+            brand: { 50:'#FFF7ED',100:'#FFEDD5',200:'#FED7AA',300:'#FDBA74',400:'#FB923C',500:'#F97316',600:'#EA580C',700:'#C2410C' },
+            home: { light:'#DBEAFE', DEFAULT:'#3B82F6', dark:'#1D4ED8' },
+            restaurant: { light:'#D1FAE5', DEFAULT:'#10B981', dark:'#047857' },
+          }
+        }
+      }
+    }
+  </script>
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+    body { font-family: 'Inter', system-ui, sans-serif; }
+    .fade-in { animation: fadeIn 0.2s ease-in; }
+    @keyframes fadeIn { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }
+    .slot-pulse { animation: pulse 2s cubic-bezier(0.4,0,0.6,1) infinite; }
+    @keyframes pulse { 0%,100% { opacity:1; } 50% { opacity:0.7; } }
+    ::-webkit-scrollbar { width: 6px; }
+    ::-webkit-scrollbar-track { background: #f1f5f9; }
+    ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 3px; }
+  </style>
+</head>
+<body class="bg-gray-50 text-gray-900">
+  <div id="root"></div>
+  <script type="text/babel">
+// ── IMPORTS & SHORTCUTS ─────────────────────────────────────────
+const { useState, useEffect, useContext, createContext, useCallback, useMemo, useRef } = React;
+
+// ── SAFE STORAGE HELPERS ─────────────────────────────────────────
+// Some browsers (iOS private mode, certain security policies) throw on storage access
+function safeSessionGet(key) { try { return sessionStorage.getItem(key); } catch(e) { return null; } }
+function safeSessionSet(key, val) { try { sessionStorage.setItem(key, val); } catch(e) {} }
+function safeLocalGet(key) { try { return localStorage.getItem(key); } catch(e) { return null; } }
+function safeLocalSet(key, val) { try { localStorage.setItem(key, val); } catch(e) {} }
+function safeLocalRemove(key) { try { localStorage.removeItem(key); } catch(e) {} }
+
+// ── PASSWORD ─────────────────────────────────────────────────────
+// Change this to update your family's password:
+const FAMILY_PASSWORD = "Bear";
+
+// ── PASSWORD GATE ────────────────────────────────────────────────
+const SESSION_KEY = 'fp_auth';
+
+function PasswordGate({ children }) {
+  const [authed, setAuthed] = useState(() => safeSessionGet(SESSION_KEY) === '1');
+  const [input, setInput] = useState('');
+  const [error, setError] = useState(false);
+  const [shake, setShake] = useState(false);
+  const inputRef = useRef(null);
+
+  useEffect(() => { if (!authed && inputRef.current) inputRef.current.focus(); }, [authed]);
+
+  function handleSubmit(e) {
+    e.preventDefault();
+    if (input === FAMILY_PASSWORD) {
+      safeSessionSet(SESSION_KEY, '1');
+      setAuthed(true);
+    } else {
+      setError(true);
+      setShake(true);
+      setInput('');
+      setTimeout(() => setShake(false), 600);
+      if (inputRef.current) inputRef.current.focus();
+    }
+  }
+
+  if (authed) return children;
+
+  return (
+    <div className="min-h-screen bg-gray-50 flex items-center justify-center p-4">
+      <div className="w-full max-w-sm">
+        <div className="text-center mb-8">
+          <div className="text-5xl mb-3">🍽️</div>
+          <h1 className="text-2xl font-bold text-gray-900">FamilyPlate</h1>
+          <p className="text-gray-500 text-sm mt-1">Family access only</p>
+        </div>
+        <form onSubmit={handleSubmit} className={`bg-white rounded-2xl shadow-sm border border-gray-100 p-6 ${shake ? 'animate-[shake_0.5s_ease-in-out]' : ''}`}>
+          <style>{`@keyframes shake{0%,100%{transform:translateX(0)}15%,45%,75%{transform:translateX(-6px)}30%,60%,90%{transform:translateX(6px)}}`}</style>
+          <label className="block text-sm font-medium text-gray-700 mb-2">Password</label>
+          <input
+            ref={inputRef}
+            type="password"
+            value={input}
+            onChange={e => { setInput(e.target.value); setError(false); }}
+            placeholder="Enter family password"
+            className={`w-full px-4 py-3 rounded-xl border text-sm outline-none transition-all ${error ? 'border-red-400 bg-red-50 focus:ring-2 focus:ring-red-200' : 'border-gray-200 focus:border-brand-500 focus:ring-2 focus:ring-brand-100'}`}
+          />
+          {error && <p className="text-red-500 text-xs mt-2">Wrong password. Try again.</p>}
+          <button
+            type="submit"
+            className="mt-4 w-full bg-brand-500 hover:bg-brand-600 text-white font-semibold py-3 rounded-xl text-sm transition-colors"
+          >
+            Unlock
+          </button>
+        </form>
+      </div>
+    </div>
+  );
+}
+
+// ── UTILITY FUNCTIONS ───────────────────────────────────────────
+const uid = () => Math.random().toString(36).slice(2, 10);
+const today = () => { const d = new Date(); return d.toISOString().split('T')[0]; };
+const dayName = (ds) => new Date(ds+'T12:00:00').toLocaleDateString('en-US',{weekday:'short'});
+const dayNum = (ds) => new Date(ds+'T12:00:00').getDate();
+const monthName = (ds) => new Date(ds+'T12:00:00').toLocaleDateString('en-US',{month:'long', year:'numeric'});
+
+function getWeekDates(offset=0) {
+  const now = new Date();
+  now.setDate(now.getDate() + offset * 7);
+  const mon = new Date(now);
+  mon.setDate(mon.getDate() - ((mon.getDay() + 6) % 7));
+  return Array.from({length:7},(_,i)=>{
+    const d = new Date(mon);
+    d.setDate(d.getDate()+i);
+    return d.toISOString().split('T')[0];
+  });
+}
+
+function daysSince(dateStr) {
+  if (!dateStr) return Infinity;
+  const d = new Date(dateStr+'T12:00:00');
+  const t = new Date(today()+'T12:00:00');
+  return Math.floor((t - d) / 86400000);
+}
+
+const CUISINES = ['Italian','Mexican','Chinese','Japanese','Indian','Thai','American','Mediterranean','Korean','French','Vietnamese','Greek','Middle Eastern','Ethiopian','Other'];
+const TAGS = ['Quick (<30min)','Family-Friendly','Toddler-Safe','Vegetarian','Vegan','Gluten-Free','Dairy-Free','Nut-Free','Spicy','Comfort Food','Healthy','Meal Prep','One-Pot','Grilling','Baking'];
+const COMMON_MEALS = [
+  {name:'Spaghetti Bolognese',cuisine:'Italian',prepTime:40,tags:['Family-Friendly','Comfort Food']},
+  {name:'Chicken Stir Fry',cuisine:'Chinese',prepTime:25,tags:['Quick (<30min)','Healthy']},
+  {name:'Tacos',cuisine:'Mexican',prepTime:30,tags:['Family-Friendly','Quick (<30min)']},
+  {name:'Grilled Salmon',cuisine:'American',prepTime:25,tags:['Healthy','Quick (<30min)']},
+  {name:'Mac and Cheese',cuisine:'American',prepTime:30,tags:['Family-Friendly','Comfort Food','Toddler-Safe']},
+  {name:'Chicken Curry',cuisine:'Indian',prepTime:45,tags:['Comfort Food','Spicy']},
+  {name:'Pizza (Homemade)',cuisine:'Italian',prepTime:60,tags:['Family-Friendly','Baking']},
+  {name:'Pad Thai',cuisine:'Thai',prepTime:30,tags:['Quick (<30min)']},
+  {name:'Burgers',cuisine:'American',prepTime:25,tags:['Family-Friendly','Quick (<30min)','Grilling']},
+  {name:'Caesar Salad',cuisine:'American',prepTime:15,tags:['Quick (<30min)','Healthy','Vegetarian']},
+  {name:'Chicken Nuggets',cuisine:'American',prepTime:20,tags:['Quick (<30min)','Family-Friendly','Toddler-Safe']},
+  {name:'Pasta Primavera',cuisine:'Italian',prepTime:25,tags:['Vegetarian','Quick (<30min)','Toddler-Safe']},
+  {name:'Beef Stew',cuisine:'American',prepTime:90,tags:['Comfort Food','One-Pot']},
+  {name:'Fish Tacos',cuisine:'Mexican',prepTime:25,tags:['Quick (<30min)','Healthy']},
+  {name:'Fried Rice',cuisine:'Chinese',prepTime:20,tags:['Quick (<30min)','Family-Friendly']},
+  {name:'Pancakes',cuisine:'American',prepTime:20,tags:['Quick (<30min)','Family-Friendly','Toddler-Safe']},
+  {name:'Grilled Cheese & Soup',cuisine:'American',prepTime:15,tags:['Quick (<30min)','Comfort Food','Toddler-Safe']},
+  {name:'Teriyaki Chicken',cuisine:'Japanese',prepTime:30,tags:['Family-Friendly']},
+  {name:'Shakshuka',cuisine:'Middle Eastern',prepTime:25,tags:['Vegetarian','Quick (<30min)','Healthy']},
+  {name:'Lasagna',cuisine:'Italian',prepTime:75,tags:['Comfort Food','Family-Friendly','Baking']},
+  {name:'Buddha Bowl',cuisine:'Other',prepTime:20,tags:['Healthy','Vegetarian','Quick (<30min)']},
+  {name:'Chicken Soup',cuisine:'American',prepTime:45,tags:['Comfort Food','One-Pot','Toddler-Safe']},
+  {name:'Sushi (Homemade)',cuisine:'Japanese',prepTime:60,tags:['Healthy']},
+  {name:'Quesadillas',cuisine:'Mexican',prepTime:15,tags:['Quick (<30min)','Family-Friendly','Toddler-Safe']},
+  {name:'Meatloaf',cuisine:'American',prepTime:60,tags:['Comfort Food','Family-Friendly']},
+];
+
+// ── DATA STORE ──────────────────────────────────────────────────
+const DEFAULT_HOUSEHOLD = {
+  name: 'Our Family',
+  members: [
+    {id:'a1',name:'Partner A',type:'adult',preferences:{dietary:[],dislikes:[],allergens:[]}},
+    {id:'a2',name:'Partner B',type:'adult',preferences:{dietary:[],dislikes:[],allergens:[]}},
+    {id:'c1',name:'Child 1',type:'child',age:3,preferences:{dietary:[],dislikes:[],allergens:[]}},
+    {id:'c2',name:'Child 2',type:'child',age:1,preferences:{dietary:[],dislikes:[],allergens:[]}},
+  ],
+  repetitionWindow: 14,
+  repetitionMode: 'warn',
+};
+
+// ── FIREBASE SYNC ────────────────────────────────────────────────
+const FIREBASE_URL = 'https://familyplate-b4ba9-default-rtdb.firebaseio.com/familyplate.json';
+
+// Firebase Realtime DB converts empty arrays to null and may convert
+// arrays to objects with numeric keys ({0: …, 1: …}).  This helper
+// ensures every field the app expects as an array IS an array, and
+// nested objects (household.members, each member's preferences) are
+// also normalised.
+function normalizeFirebaseData(data) {
+  if (!data || typeof data !== 'object') return null;
+
+  // Convert Firebase object-with-numeric-keys → array, keep real arrays,
+  // and turn null / undefined → fallback.
+  function toArray(val, fallback = []) {
+    if (val === null || val === undefined) return fallback;
+    if (Array.isArray(val)) return val;
+    if (typeof val === 'object') {
+      // Firebase numeric-keyed object → array (filter out holes)
+      const keys = Object.keys(val);
+      if (keys.every(k => /^\d+$/.test(k))) {
+        return keys.sort((a,b) => +a - +b).map(k => val[k]).filter(Boolean);
+      }
+      return fallback;            // Not a numeric-keyed object
+    }
+    return fallback;
+  }
+
+  const meals = toArray(data.meals);
+  const restaurants = toArray(data.restaurants);
+
+  // Normalise each meal's tags and history arrays
+  const normMeals = meals.map(m => ({
+    ...m,
+    tags: toArray(m.tags),
+    history: toArray(m.history),
+  }));
+
+  // Normalise household members & their nested preference arrays
+  let household = data.household || DEFAULT_HOUSEHOLD;
+  if (household) {
+    const members = toArray(household.members, DEFAULT_HOUSEHOLD.members);
+    household = {
+      ...DEFAULT_HOUSEHOLD,
+      ...household,
+      members: members.map(mem => ({
+        ...mem,
+        preferences: {
+          dietary:   toArray(mem.preferences?.dietary),
+          dislikes:  toArray(mem.preferences?.dislikes),
+          allergens: toArray(mem.preferences?.allergens),
+        },
+      })),
+    };
+  }
+
+  // Normalise restaurant openDays arrays
+  const normRestaurants = restaurants.map(r => ({
+    ...r,
+    openDays: toArray(r.openDays),
+  }));
+
+  return {
+    ...data,
+    meals: normMeals,
+    restaurants: normRestaurants,
+    household,
+    plans: data.plans || {},
+    onboarded: !!data.onboarded,
+  };
+}
+
+async function loadFromFirebase() {
+  try {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 5000); // 5-second timeout
+    const res = await fetch(FIREBASE_URL, { signal: controller.signal });
+    clearTimeout(timer);
+    if (!res.ok) return null;
+    const raw = await res.json();
+    const data = normalizeFirebaseData(raw);
+    if (data) safeLocalSet('familyplate', JSON.stringify(data)); // cache locally
+    return data;
+  } catch(e) {
+    console.warn('[FamilyPlate] Firebase load failed, using local cache:', e.message);
+    return null;
+  }
+}
+
+let _saveTimer = null;
+function saveState(state) {
+  // Write to localStorage immediately for fast local access
+  safeLocalSet('familyplate', JSON.stringify(state));
+  // Debounce Firebase writes to avoid hammering on rapid changes
+  clearTimeout(_saveTimer);
+  _saveTimer = setTimeout(() => {
+    const ctrl = new AbortController();
+    setTimeout(() => ctrl.abort(), 8000);
+    fetch(FIREBASE_URL, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(state),
+      signal: ctrl.signal,
+    }).catch(() => {});
+  }, 1000);
+}
+
+function loadCachedState() {
+  try {
+    const raw = safeLocalGet('familyplate');
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      return normalizeFirebaseData(parsed) || parsed;
+    }
+  } catch(e) {}
+  return null;
+}
+
+const EMPTY_STATE = {
+  household: DEFAULT_HOUSEHOLD,
+  meals: [],
+  restaurants: [],
+  plans: {},  // { 'YYYY-MM-DD': { breakfast: SlotData, lunch: SlotData, dinner: SlotData } }
+  onboarded: false,
+};
+
+const INITIAL_STATE = loadCachedState() || EMPTY_STATE;
+
+const AppContext = createContext();
+
+function useApp() { return useContext(AppContext); }
+
+// ── ICONS (inline SVG) ─────────────────────────────────────────
+const Icon = ({name, size=20, className=''}) => {
+  const icons = {
+    calendar: <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>,
+    book: <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>,
+    utensils: <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 2v7c0 1.1.9 2 2 2h4a2 2 0 0 0 2-2V2"/><path d="M7 2v20"/><path d="M21 15V2v0a5 5 0 0 0-5 5v6c0 1.1.9 2 2 2h3Zm0 0v7"/></svg>,
+    store: <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>,
+    settings: <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="3"/><path d="M12 1v2m0 18v2m-9-11h2m18 0h2m-3.3-6.7l-1.4 1.4M6.7 17.3l-1.4 1.4m0-12.8l1.4 1.4m10.6 10.6l1.4 1.4"/></svg>,
+    plus: <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>,
+    x: <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>,
+    search: <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>,
+    chevLeft: <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="15 18 9 12 15 6"/></svg>,
+    chevRight: <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="9 18 15 12 9 6"/></svg>,
+    sparkles: <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 3l1.5 5.5L19 10l-5.5 1.5L12 17l-1.5-5.5L5 10l5.5-1.5L12 3z"/></svg>,
+    alert: <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>,
+    heart: <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/></svg>,
+    heartFill: <svg width={size} height={size} viewBox="0 0 24 24" fill="currentColor" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/></svg>,
+    trash: <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>,
+    edit: <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>,
+    users: <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>,
+    clock: <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>,
+    check: <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>,
+    menu: <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="18" x2="21" y2="18"/></svg>,
+    shuffle: <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="16 3 21 3 21 8"/><line x1="4" y1="20" x2="21" y2="3"/><polyline points="21 16 21 21 16 21"/><line x1="15" y1="15" x2="21" y2="21"/><line x1="4" y1="4" x2="9" y2="9"/></svg>,
+  };
+  return <span className={className}>{icons[name] || null}</span>;
+};
+
+// ── MODAL ───────────────────────────────────────────────────────
+const Modal = ({open, onClose, title, children, wide}) => {
+  if (!open) return null;
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4" onClick={onClose}>
+      <div className="absolute inset-0 bg-black/40" />
+      <div className={`relative bg-white rounded-2xl shadow-2xl w-full ${wide?'max-w-2xl':'max-w-md'} max-h-[90vh] overflow-hidden fade-in`} onClick={e=>e.stopPropagation()}>
+        <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100">
+          <h2 className="text-lg font-semibold text-gray-900">{title}</h2>
+          <button onClick={onClose} className="p-1 rounded-lg hover:bg-gray-100 text-gray-400 hover:text-gray-600 transition"><Icon name="x" /></button>
+        </div>
+        <div className="px-6 py-4 overflow-y-auto max-h-[calc(90vh-80px)]">{children}</div>
+      </div>
+    </div>
+  );
+};
+
+// ── ONBOARDING ──────────────────────────────────────────────────
+const Onboarding = () => {
+  const { state, dispatch } = useApp();
+  const [step, setStep] = useState(0);
+  const [houseName, setHouseName] = useState('Our Family');
+  const [members, setMembers] = useState(DEFAULT_HOUSEHOLD.members);
+  const [selectedMeals, setSelectedMeals] = useState(new Set());
+
+  const updateMember = (id, field, val) => setMembers(m => m.map(x => x.id === id ? {...x, [field]: val} : x));
+
+  const finish = () => {
+    const newMeals = COMMON_MEALS.filter((_,i) => selectedMeals.has(i)).map(m => ({
+      id: uid(), ...m, toddlerSafe: m.tags.includes('Toddler-Safe'), adultOnly: m.tags.includes('Spicy'),
+      history: [], createdAt: today()
+    }));
+    dispatch({type:'SETUP', payload:{
+      household: {...DEFAULT_HOUSEHOLD, name: houseName, members},
+      meals: newMeals, onboarded: true
+    }});
+  };
+
+  const steps = [
+    // Step 0: Welcome
+    <div key="welcome" className="text-center py-8 fade-in">
+      <div className="text-6xl mb-6">🍽️</div>
+      <h1 className="text-3xl font-bold text-gray-900 mb-3">Welcome to FamilyPlate</h1>
+      <p className="text-gray-500 mb-8 max-w-md mx-auto">Take the stress out of meal planning. Let's set up your household in under a minute.</p>
+      <button onClick={()=>setStep(1)} className="px-8 py-3 bg-brand-500 text-white rounded-xl font-semibold hover:bg-brand-600 transition shadow-lg shadow-brand-500/25">Get Started</button>
+    </div>,
+    // Step 1: Household Name & Members
+    <div key="household" className="py-4 fade-in">
+      <h3 className="text-xl font-semibold mb-4">Name your household</h3>
+      <input value={houseName} onChange={e=>setHouseName(e.target.value)} className="w-full px-4 py-3 border border-gray-200 rounded-xl mb-6 focus:ring-2 focus:ring-brand-500 focus:border-transparent outline-none" placeholder="e.g. The Smiths" />
+      <h3 className="text-xl font-semibold mb-4">Your household members</h3>
+      <div className="space-y-3">
+        {members.map(m => (
+          <div key={m.id} className="flex items-center gap-3 p-3 bg-gray-50 rounded-xl">
+            <span className="text-2xl">{m.type==='adult'?'👤':'👶'}</span>
+            <input value={m.name} onChange={e=>updateMember(m.id,'name',e.target.value)} className="flex-1 px-3 py-2 bg-white border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-brand-500 outline-none" />
+            <span className="text-xs text-gray-400 capitalize">{m.type}{m.age?` (${m.age}yr)`:''}</span>
+          </div>
+        ))}
+      </div>
+      <div className="flex justify-end mt-6">
+        <button onClick={()=>setStep(2)} className="px-6 py-2.5 bg-brand-500 text-white rounded-xl font-medium hover:bg-brand-600 transition">Next</button>
+      </div>
+    </div>,
+    // Step 2: Seed Meal Library
+    <div key="meals" className="py-4 fade-in">
+      <h3 className="text-xl font-semibold mb-2">Seed your meal library</h3>
+      <p className="text-gray-500 text-sm mb-4">Pick meals your family enjoys. You can add more later.</p>
+      <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 max-h-[50vh] overflow-y-auto pr-1">
+        {COMMON_MEALS.map((m,i) => (
+          <button key={i} onClick={()=>{const s=new Set(selectedMeals); s.has(i)?s.delete(i):s.add(i); setSelectedMeals(s);}}
+            className={`p-3 rounded-xl border text-left text-sm transition ${selectedMeals.has(i)?'border-brand-500 bg-brand-50 ring-2 ring-brand-500/20':'border-gray-200 hover:border-gray-300 bg-white'}`}>
+            <div className="font-medium text-gray-900">{m.name}</div>
+            <div className="text-xs text-gray-400 mt-0.5">{m.cuisine} &middot; {m.prepTime}min</div>
+          </button>
+        ))}
+      </div>
+      <p className="text-sm text-gray-400 mt-3">{selectedMeals.size} meals selected</p>
+      <div className="flex justify-between mt-4">
+        <button onClick={()=>setStep(1)} className="px-6 py-2.5 text-gray-600 rounded-xl font-medium hover:bg-gray-100 transition">Back</button>
+        <button onClick={finish} className="px-6 py-2.5 bg-brand-500 text-white rounded-xl font-medium hover:bg-brand-600 transition">{selectedMeals.size>0?`Start Planning (${selectedMeals.size} meals)`:'Skip & Start'}</button>
+      </div>
+    </div>,
+  ];
+
+  return <div className="min-h-screen flex items-center justify-center p-4"><div className="w-full max-w-lg">{steps[step]}</div></div>;
+};
+
+// ── MEAL SLOT COMPONENT ─────────────────────────────────────────
+const MealSlot = ({date, slotType, plan, onAdd, onRemove, onSuggest, compact, dragSource, onDragStart, onDragEnd, onDrop}) => {
+  const { state } = useApp();
+  const slot = plan?.[slotType];
+  const slotLabel = slotType === 'breakfast' ? 'B' : slotType === 'lunch' ? 'L' : 'D';
+  const slotFull = slotType === 'breakfast' ? 'Breakfast' : slotType === 'lunch' ? 'Lunch' : 'Dinner';
+  const [isDragOver, setIsDragOver] = useState(false);
+
+  const isSelf = dragSource && dragSource.date === date && dragSource.slot === slotType;
+  const isDragging = !!dragSource;
+
+  const dropHandlers = {
+    onDragOver: e => { e.preventDefault(); if (!isSelf) setIsDragOver(true); },
+    onDragLeave: () => setIsDragOver(false),
+    onDrop: e => { e.preventDefault(); setIsDragOver(false); if (!isSelf) onDrop(date, slotType); },
+  };
+
+  if (!slot || slot.type === 'empty') {
+    return (
+      <div
+        {...dropHandlers}
+        className={`group border border-dashed rounded-xl transition cursor-pointer ${compact?'p-2':'p-3'} ${isDragOver ? 'border-brand-400 bg-brand-50 scale-[1.02]' : 'border-gray-200 hover:border-brand-400 hover:bg-brand-50/30'}`}
+        onClick={()=>{ if (!isDragging) onAdd(date, slotType); }}
+      >
+        <div className="flex items-center justify-between">
+          {!compact && <span className="text-xs font-medium text-gray-400 uppercase">{slotFull}</span>}
+          <div className="flex gap-1">
+            <button onClick={(e)=>{e.stopPropagation();onSuggest(date,slotType)}} className="p-1 rounded-md opacity-0 group-hover:opacity-100 hover:bg-brand-100 text-brand-500 transition" title="Suggest a meal">
+              <Icon name="sparkles" size={14} />
+            </button>
+            <span className="p-1 rounded-md opacity-0 group-hover:opacity-100 text-gray-400"><Icon name="plus" size={14} /></span>
+          </div>
+        </div>
+        {compact && <span className="text-xs text-gray-300">{isDragOver ? '↓' : slotLabel}</span>}
+      </div>
+    );
+  }
+
+  const isHome = slot.type === 'home';
+  const item = isHome
+    ? state.meals.find(m => m.id === slot.mealId)
+    : state.restaurants.find(r => r.id === slot.mealId);
+  const name = item?.name || 'Unknown';
+
+  // Repetition check
+  const rWin = state.household.repetitionWindow;
+  const lastPlanned = isHome ? getLastPlanned(state.plans, slot.mealId, date) : getLastPlannedRestaurant(state.plans, slot.mealId, date);
+  const withinWindow = lastPlanned && daysSince(lastPlanned) < rWin && lastPlanned !== date;
+
+  return (
+    <div
+      draggable
+      onDragStart={() => onDragStart(date, slotType)}
+      onDragEnd={onDragEnd}
+      {...dropHandlers}
+      className={`rounded-xl border transition relative group ${compact?'p-2':'p-3'} ${isHome?'bg-home-light/50 border-home/20':'bg-restaurant-light/50 border-restaurant/20'} ${isSelf ? 'opacity-40 scale-95' : ''} ${isDragOver ? 'ring-2 ring-brand-400 scale-[1.02]' : ''} cursor-grab active:cursor-grabbing`}
+    >
+      <div className="flex items-start justify-between gap-1">
+        <div className="min-w-0 flex-1">
+          {!compact && <span className="text-xs font-medium uppercase text-gray-400 block mb-0.5">{slotFull}</span>}
+          <span className={`font-medium block truncate ${compact?'text-xs':'text-sm'}`}>{name}</span>
+          {!compact && item?.cuisine && <span className="text-xs text-gray-400">{item.cuisine}</span>}
+        </div>
+        <button onClick={()=>onRemove(date,slotType)} className="p-1 rounded-md opacity-0 group-hover:opacity-100 hover:bg-red-50 text-red-400 transition flex-shrink-0" title="Remove">
+          <Icon name="x" size={14} />
+        </button>
+      </div>
+      {withinWindow && (
+        <div className="flex items-center gap-1 mt-1.5 text-amber-600" title={`Last planned ${daysSince(lastPlanned)} days ago (window: ${rWin} days)`}>
+          <Icon name="alert" size={12} />
+          <span className="text-xs font-medium">Repeat</span>
+        </div>
+      )}
+      {slot.perPerson && Object.keys(slot.perPerson).length > 0 && (
+        <div className="mt-1.5 space-y-0.5">
+          {Object.entries(slot.perPerson).map(([mid, mealId]) => {
+            const member = state.household.members.find(m=>m.id===mid);
+            const meal = state.meals.find(m=>m.id===mealId);
+            return meal ? <div key={mid} className="text-xs text-gray-500 truncate">{member?.name}: {meal.name}</div> : null;
+          })}
+        </div>
+      )}
+    </div>
+  );
+};
+
+function getLastPlanned(plans, mealId, excludeDate) {
+  let latest = null;
+  for (const [date, day] of Object.entries(plans)) {
+    if (date === excludeDate) continue;
+    for (const slot of ['breakfast','lunch','dinner']) {
+      if (day[slot]?.mealId === mealId && (!latest || date > latest)) latest = date;
+    }
+  }
+  return latest;
+}
+function getLastPlannedRestaurant(plans, mealId, excludeDate) {
+  return getLastPlanned(plans, mealId, excludeDate);
+}
+
+// ── ADD MEAL TO SLOT MODAL ──────────────────────────────────────
+const AddMealModal = ({open, onClose, date, slotType, onSelect}) => {
+  const { state, dispatch } = useApp();
+  const [tab, setTab] = useState('home');
+  const [search, setSearch] = useState('');
+  const [quickName, setQuickName] = useState('');
+
+  const filteredMeals = useMemo(() => {
+    return state.meals.filter(m => m.name.toLowerCase().includes(search.toLowerCase()) || m.cuisine.toLowerCase().includes(search.toLowerCase()));
+  }, [state.meals, search]);
+
+  const dateDayName = dayName(date);
+  const filteredRestaurants = useMemo(() => {
+    return state.restaurants.filter(r => {
+      if (!r.name.toLowerCase().includes(search.toLowerCase())) return false;
+      if (r.openDays && !r.openDays.includes(dateDayName)) return false;
+      return true;
+    });
+  }, [state.restaurants, search, dateDayName]);
+
+  const quickAdd = () => {
+    if (!quickName.trim()) return;
+    const meal = { id: uid(), name: quickName.trim(), cuisine: 'Other', prepTime: 30, tags: [], toddlerSafe: false, adultOnly: false, history: [], createdAt: today() };
+    dispatch({type:'ADD_MEAL', payload: meal});
+    onSelect(date, slotType, 'home', meal.id);
+    setQuickName('');
+    onClose();
+  };
+
+  const selectMeal = (mealId) => { onSelect(date, slotType, 'home', mealId); onClose(); };
+  const selectRestaurant = (restId) => { onSelect(date, slotType, 'restaurant', restId); onClose(); };
+
+  const slotFull = slotType === 'breakfast' ? 'Breakfast' : slotType === 'lunch' ? 'Lunch' : 'Dinner';
+
+  return (
+    <Modal open={open} onClose={onClose} title={`${slotFull} — ${new Date(date+'T12:00:00').toLocaleDateString('en-US',{weekday:'short', month:'short', day:'numeric'})}`} wide>
+      {/* Quick add bar */}
+      <div className="flex gap-2 mb-4">
+        <input value={quickName} onChange={e=>setQuickName(e.target.value)} onKeyDown={e=>e.key==='Enter'&&quickAdd()} className="flex-1 px-4 py-2.5 border border-gray-200 rounded-xl text-sm focus:ring-2 focus:ring-brand-500 outline-none" placeholder="Quick add — type a meal name and press Enter" />
+        <button onClick={quickAdd} disabled={!quickName.trim()} className="px-4 py-2.5 bg-brand-500 text-white rounded-xl text-sm font-medium hover:bg-brand-600 transition disabled:opacity-40"><Icon name="plus" size={16} /></button>
+      </div>
+
+      {/* Tabs */}
+      <div className="flex gap-1 mb-4 bg-gray-100 rounded-xl p-1">
+        <button onClick={()=>setTab('home')} className={`flex-1 py-2 rounded-lg text-sm font-medium transition ${tab==='home'?'bg-white shadow text-home':'text-gray-500 hover:text-gray-700'}`}>Home Meals ({state.meals.length})</button>
+        <button onClick={()=>setTab('restaurant')} className={`flex-1 py-2 rounded-lg text-sm font-medium transition ${tab==='restaurant'?'bg-white shadow text-restaurant':'text-gray-500 hover:text-gray-700'}`}>Restaurants ({state.restaurants.length})</button>
+      </div>
+
+      {/* Search */}
+      <div className="relative mb-3">
+        <Icon name="search" size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+        <input value={search} onChange={e=>setSearch(e.target.value)} className="w-full pl-9 pr-4 py-2 border border-gray-200 rounded-xl text-sm focus:ring-2 focus:ring-brand-500 outline-none" placeholder={`Search ${tab==='home'?'meals':'restaurants'}...`} />
+      </div>
+
+      {/* List */}
+      <div className="space-y-2 max-h-[40vh] overflow-y-auto">
+        {tab === 'home' && filteredMeals.map(m => {
+          const rWin = state.household.repetitionWindow;
+          const last = getLastPlanned(state.plans, m.id, date);
+          const withinWindow = last && daysSince(last) < rWin;
+          const blocked = withinWindow && state.household.repetitionMode === 'block';
+          return (
+            <button key={m.id} onClick={()=>!blocked&&selectMeal(m.id)} disabled={blocked}
+              className={`w-full text-left p-3 rounded-xl border transition flex items-center gap-3 ${blocked?'opacity-40 cursor-not-allowed border-gray-200':'hover:border-home/40 hover:bg-home-light/30 border-gray-200'}`}>
+              <div className="w-10 h-10 rounded-lg bg-home-light flex items-center justify-center text-home flex-shrink-0"><Icon name="utensils" size={18} /></div>
+              <div className="flex-1 min-w-0">
+                <div className="font-medium text-sm truncate">{m.name}</div>
+                <div className="text-xs text-gray-400">{m.cuisine} {m.prepTime?`· ${m.prepTime}min`:''} {m.tags.length?`· ${m.tags.slice(0,2).join(', ')}`:''}</div>
+              </div>
+              {withinWindow && <span className="text-xs px-2 py-1 rounded-full bg-amber-50 text-amber-600 font-medium flex-shrink-0">{blocked?'Blocked':'Repeat'}</span>}
+            </button>
+          );
+        })}
+        {tab === 'restaurant' && filteredRestaurants.map(r => (
+          <button key={r.id} onClick={()=>selectRestaurant(r.id)}
+            className="w-full text-left p-3 rounded-xl border border-gray-200 hover:border-restaurant/40 hover:bg-restaurant-light/30 transition flex items-center gap-3">
+            <div className="w-10 h-10 rounded-lg bg-restaurant-light flex items-center justify-center text-restaurant flex-shrink-0"><Icon name="store" size={18} /></div>
+            <div className="flex-1 min-w-0">
+              <div className="font-medium text-sm truncate">{r.name}</div>
+              <div className="text-xs text-gray-400">{r.cuisine} · {r.priceRange}</div>
+            </div>
+            {r.isFavorite && <span className="text-red-400"><Icon name="heartFill" size={14} /></span>}
+          </button>
+        ))}
+        {tab === 'home' && filteredMeals.length === 0 && <p className="text-sm text-gray-400 text-center py-8">No meals found. Add one with quick-add above!</p>}
+        {tab === 'restaurant' && filteredRestaurants.length === 0 && (
+          <p className="text-sm text-gray-400 text-center py-8">
+            {state.restaurants.length === 0
+              ? 'No restaurants saved yet. Add one from the Restaurants tab.'
+              : `No restaurants open on ${dateDayName}. Edit a restaurant to update its open days.`}
+          </p>
+        )}
+      </div>
+    </Modal>
+  );
+};
+
+// ── SUGGESTION MODAL ────────────────────────────────────────────
+const SuggestModal = ({open, onClose, date, slotType, onSelect}) => {
+  const { state } = useApp();
+  const [suggestions, setSuggestions] = useState([]);
+
+  const generateSuggestions = useCallback(() => {
+    const rWin = state.household.repetitionWindow;
+    const weekDates = getWeekDates(0);
+    const weekCuisines = {};
+    weekDates.forEach(d => {
+      const p = state.plans[d];
+      if (!p) return;
+      ['breakfast','lunch','dinner'].forEach(s => {
+        if (p[s]?.type === 'home') {
+          const m = state.meals.find(x => x.id === p[s].mealId);
+          if (m) weekCuisines[m.cuisine] = (weekCuisines[m.cuisine]||0) + 1;
+        }
+      });
+    });
+
+    const eligible = state.meals.filter(m => {
+      const last = getLastPlanned(state.plans, m.id, date);
+      return !last || daysSince(last) >= rWin;
+    });
+
+    // Score: prefer underrepresented cuisines, variety
+    const scored = eligible.map(m => ({
+      ...m,
+      score: 10 - (weekCuisines[m.cuisine] || 0) * 3 + Math.random() * 4
+    }));
+    scored.sort((a,b) => b.score - a.score);
+    setSuggestions(scored.slice(0, 3));
+  }, [state, date]);
+
+  useEffect(() => { if (open) generateSuggestions(); }, [open, generateSuggestions]);
+
+  return (
+    <Modal open={open} onClose={onClose} title="Meal Suggestions">
+      <p className="text-sm text-gray-500 mb-4">Based on your library, avoiding recent repeats and balancing variety:</p>
+      <div className="space-y-3">
+        {suggestions.map((m, i) => (
+          <button key={m.id} onClick={()=>{onSelect(date,slotType,'home',m.id);onClose();}}
+            className="w-full text-left p-4 rounded-xl border border-gray-200 hover:border-brand-400 hover:bg-brand-50/30 transition">
+            <div className="flex items-center gap-3">
+              <div className="w-8 h-8 rounded-lg bg-brand-100 flex items-center justify-center text-brand-600 font-bold text-sm">{i+1}</div>
+              <div>
+                <div className="font-medium">{m.name}</div>
+                <div className="text-xs text-gray-400">{m.cuisine} · {m.prepTime}min</div>
+              </div>
+            </div>
+          </button>
+        ))}
+        {suggestions.length === 0 && <p className="text-sm text-gray-400 text-center py-6">No eligible meals found. Add more meals to your library!</p>}
+      </div>
+      <button onClick={generateSuggestions} className="mt-4 flex items-center gap-2 mx-auto px-4 py-2 text-sm text-brand-600 hover:bg-brand-50 rounded-xl transition">
+        <Icon name="shuffle" size={16} /> Shuffle suggestions
+      </button>
+    </Modal>
+  );
+};
+
+// ── WEEKLY CALENDAR ─────────────────────────────────────────────
+const WeeklyCalendar = () => {
+  const { state, dispatch } = useApp();
+  const [weekOffset, setWeekOffset] = useState(0);
+  const [addModal, setAddModal] = useState(null);
+  const [suggestModal, setSuggestModal] = useState(null);
+  const [mobileDay, setMobileDay] = useState(0);
+
+  const dates = useMemo(() => getWeekDates(weekOffset), [weekOffset]);
+
+  const [dragSource, setDragSource] = useState(null);
+
+  const handleSelect = (date, slot, type, mealId, perPerson) => {
+    dispatch({type:'SET_SLOT', payload:{date, slot, data:{type, mealId, perPerson: perPerson || null}}});
+  };
+  const handleRemove = (date, slot) => {
+    dispatch({type:'SET_SLOT', payload:{date, slot, data:{type:'empty'}}});
+  };
+  const handleDragStart = (date, slot) => setDragSource({ date, slot });
+  const handleDragEnd = () => setDragSource(null);
+  const handleDrop = (toDate, toSlot) => {
+    if (!dragSource) return;
+    dispatch({ type: 'SWAP_SLOTS', payload: { from: dragSource, to: { date: toDate, slot: toSlot } } });
+    setDragSource(null);
+  };
+
+  const slotProps = { dragSource, onDragStart: handleDragStart, onDragEnd: handleDragEnd, onDrop: handleDrop };
+
+  const todayStr = today();
+  const isThisWeek = dates.includes(todayStr);
+
+  return (
+    <div className="fade-in">
+      {/* Week navigation */}
+      <div className="flex items-center justify-between mb-6">
+        <div>
+          <h1 className="text-2xl font-bold text-gray-900">Meal Plan</h1>
+          <p className="text-sm text-gray-400 mt-0.5">{monthName(dates[0])} {!isThisWeek && `· Week of ${new Date(dates[0]+'T12:00:00').toLocaleDateString('en-US',{month:'short',day:'numeric'})}`}{isThisWeek && ' · This Week'}</p>
+        </div>
+        <div className="flex items-center gap-2">
+          <button onClick={()=>setWeekOffset(w=>w-1)} className="p-2 rounded-xl hover:bg-gray-100 text-gray-500 transition"><Icon name="chevLeft" /></button>
+          {weekOffset !== 0 && <button onClick={()=>setWeekOffset(0)} className="px-3 py-1.5 text-sm font-medium text-brand-600 hover:bg-brand-50 rounded-xl transition">Today</button>}
+          <button onClick={()=>setWeekOffset(w=>w+1)} className="p-2 rounded-xl hover:bg-gray-100 text-gray-500 transition"><Icon name="chevRight" /></button>
+        </div>
+      </div>
+
+      {/* Desktop: Full grid */}
+      <div className="hidden md:block">
+        <div className="grid grid-cols-7 gap-3">
+          {dates.map(d => {
+            const isToday = d === todayStr;
+            const plan = state.plans[d] || {};
+            return (
+              <div key={d} className={`rounded-2xl p-3 transition ${isToday ? 'bg-brand-50 ring-2 ring-brand-500/20' : 'bg-white'} border border-gray-100 shadow-sm`}>
+                <div className={`text-center mb-3 ${isToday?'':'text-gray-500'}`}>
+                  <div className="text-xs font-medium uppercase">{dayName(d)}</div>
+                  <div className={`text-lg font-bold ${isToday?'text-brand-600':''}`}>{dayNum(d)}</div>
+                </div>
+                <div className="space-y-2">
+                  {['breakfast','lunch','dinner'].map(s => (
+                    <MealSlot key={s} date={d} slotType={s} plan={plan} compact
+                      onAdd={(date,slot)=>setAddModal({date,slot})}
+                      onRemove={handleRemove}
+                      onSuggest={(date,slot)=>setSuggestModal({date,slot})}
+                      {...slotProps} />
+                  ))}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* Mobile: Single day view */}
+      <div className="md:hidden">
+        {/* Day selector */}
+        <div className="flex gap-1 mb-4 overflow-x-auto pb-1">
+          {dates.map((d,i) => {
+            const isToday = d === todayStr;
+            return (
+              <button key={d} onClick={()=>setMobileDay(i)}
+                className={`flex-shrink-0 w-12 py-2 rounded-xl text-center transition ${mobileDay===i?(isToday?'bg-brand-500 text-white':'bg-gray-900 text-white'):(isToday?'bg-brand-50 text-brand-600':'bg-white text-gray-500 border border-gray-100')}`}>
+                <div className="text-xs font-medium">{dayName(d)}</div>
+                <div className="text-lg font-bold">{dayNum(d)}</div>
+              </button>
+            );
+          })}
+        </div>
+        {/* Day plan */}
+        {(() => {
+          const d = dates[mobileDay];
+          const plan = state.plans[d] || {};
+          return (
+            <div className="space-y-3 fade-in">
+              {['breakfast','lunch','dinner'].map(s => (
+                <MealSlot key={s} date={d} slotType={s} plan={plan}
+                  onAdd={(date,slot)=>setAddModal({date,slot})}
+                  onRemove={handleRemove}
+                  onSuggest={(date,slot)=>setSuggestModal({date,slot})}
+                  {...slotProps} />
+              ))}
+            </div>
+          );
+        })()}
+      </div>
+
+      {/* Modals */}
+      {addModal && <AddMealModal open={!!addModal} onClose={()=>setAddModal(null)} date={addModal.date} slotType={addModal.slot} onSelect={handleSelect} />}
+      {suggestModal && <SuggestModal open={!!suggestModal} onClose={()=>setSuggestModal(null)} date={suggestModal.date} slotType={suggestModal.slot} onSelect={handleSelect} />}
+    </div>
+  );
+};
+
+// ── MEAL LIBRARY PAGE ───────────────────────────────────────────
+const MealLibrary = () => {
+  const { state, dispatch } = useApp();
+  const [search, setSearch] = useState('');
+  const [filterCuisine, setFilterCuisine] = useState('');
+  const [filterTag, setFilterTag] = useState('');
+  const [showAdd, setShowAdd] = useState(false);
+  const [editMeal, setEditMeal] = useState(null);
+
+  const filtered = useMemo(() => {
+    return state.meals.filter(m => {
+      if (search && !m.name.toLowerCase().includes(search.toLowerCase())) return false;
+      if (filterCuisine && m.cuisine !== filterCuisine) return false;
+      if (filterTag && !m.tags.includes(filterTag)) return false;
+      return true;
+    });
+  }, [state.meals, search, filterCuisine, filterTag]);
+
+  const cuisinesUsed = [...new Set(state.meals.map(m=>m.cuisine))].sort();
+  const tagsUsed = [...new Set(state.meals.flatMap(m=>m.tags))].sort();
+
+  return (
+    <div className="fade-in">
+      <div className="flex items-center justify-between mb-6">
+        <div>
+          <h1 className="text-2xl font-bold">Meal Library</h1>
+          <p className="text-sm text-gray-400 mt-0.5">{state.meals.length} meals saved</p>
+        </div>
+        <button onClick={()=>{setEditMeal(null);setShowAdd(true)}} className="flex items-center gap-2 px-4 py-2.5 bg-brand-500 text-white rounded-xl text-sm font-medium hover:bg-brand-600 transition shadow-lg shadow-brand-500/20">
+          <Icon name="plus" size={16} /> Add Meal
+        </button>
+      </div>
+
+      {/* Filters */}
+      <div className="flex flex-wrap gap-2 mb-4">
+        <div className="relative flex-1 min-w-[200px]">
+          <Icon name="search" size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+          <input value={search} onChange={e=>setSearch(e.target.value)} className="w-full pl-9 pr-4 py-2 border border-gray-200 rounded-xl text-sm focus:ring-2 focus:ring-brand-500 outline-none bg-white" placeholder="Search meals..." />
+        </div>
+        <select value={filterCuisine} onChange={e=>setFilterCuisine(e.target.value)} className="px-3 py-2 border border-gray-200 rounded-xl text-sm bg-white focus:ring-2 focus:ring-brand-500 outline-none">
+          <option value="">All Cuisines</option>
+          {cuisinesUsed.map(c => <option key={c}>{c}</option>)}
+        </select>
+        <select value={filterTag} onChange={e=>setFilterTag(e.target.value)} className="px-3 py-2 border border-gray-200 rounded-xl text-sm bg-white focus:ring-2 focus:ring-brand-500 outline-none">
+          <option value="">All Tags</option>
+          {tagsUsed.map(t => <option key={t}>{t}</option>)}
+        </select>
+      </div>
+
+      {/* Meal Grid */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+        {filtered.map(m => {
+          const last = getLastPlanned(state.plans, m.id, '');
+          const daysAgo = last ? daysSince(last) : null;
+          const withinWindow = daysAgo !== null && daysAgo < state.household.repetitionWindow;
+          return (
+            <div key={m.id} className="bg-white rounded-2xl border border-gray-100 p-4 hover:shadow-md transition group">
+              <div className="flex items-start justify-between mb-2">
+                <div className="flex-1 min-w-0">
+                  <h3 className="font-semibold text-gray-900 truncate">{m.name}</h3>
+                  <p className="text-sm text-gray-400">{m.cuisine} {m.prepTime?`· ${m.prepTime}min`:''}</p>
+                </div>
+                <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition">
+                  <button onClick={()=>{setEditMeal(m);setShowAdd(true)}} className="p-1.5 rounded-lg hover:bg-gray-100 text-gray-400"><Icon name="edit" size={14} /></button>
+                  <button onClick={()=>dispatch({type:'DELETE_MEAL',payload:m.id})} className="p-1.5 rounded-lg hover:bg-red-50 text-red-400"><Icon name="trash" size={14} /></button>
+                </div>
+              </div>
+              {m.tags.length > 0 && (
+                <div className="flex flex-wrap gap-1 mb-2">
+                  {m.tags.slice(0,3).map(t => <span key={t} className="text-xs px-2 py-0.5 rounded-full bg-gray-100 text-gray-500">{t}</span>)}
+                  {m.tags.length > 3 && <span className="text-xs px-2 py-0.5 rounded-full bg-gray-100 text-gray-400">+{m.tags.length-3}</span>}
+                </div>
+              )}
+              <div className="flex items-center gap-3 text-xs text-gray-400">
+                {daysAgo !== null && (
+                  <span className={`flex items-center gap-1 ${withinWindow?'text-amber-500 font-medium':''}`}>
+                    <Icon name="clock" size={12} /> {daysAgo === 0 ? 'Today' : `${daysAgo}d ago`}
+                  </span>
+                )}
+                {m.toddlerSafe && <span className="px-1.5 py-0.5 rounded bg-green-50 text-green-600">Toddler-safe</span>}
+                {m.adultOnly && <span className="px-1.5 py-0.5 rounded bg-orange-50 text-orange-600">Adult-only</span>}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+      {filtered.length === 0 && <p className="text-center text-gray-400 py-12">No meals match your filters.</p>}
+
+      {showAdd && <MealForm open={showAdd} onClose={()=>{setShowAdd(false);setEditMeal(null)}} meal={editMeal} />}
+    </div>
+  );
+};
+
+// ── MEAL FORM MODAL ─────────────────────────────────────────────
+const MealForm = ({open, onClose, meal}) => {
+  const { dispatch } = useApp();
+  const [name, setName] = useState(meal?.name || '');
+  const [cuisine, setCuisine] = useState(meal?.cuisine || 'Other');
+  const [prepTime, setPrepTime] = useState(meal?.prepTime || 30);
+  const [tags, setTags] = useState(new Set(meal?.tags || []));
+  const [toddlerSafe, setToddlerSafe] = useState(meal?.toddlerSafe || false);
+  const [adultOnly, setAdultOnly] = useState(meal?.adultOnly || false);
+
+  const save = () => {
+    if (!name.trim()) return;
+    const data = { name: name.trim(), cuisine, prepTime, tags: [...tags], toddlerSafe, adultOnly };
+    if (meal) {
+      dispatch({type:'UPDATE_MEAL', payload:{id: meal.id, ...data}});
+    } else {
+      dispatch({type:'ADD_MEAL', payload:{id: uid(), ...data, history: [], createdAt: today()}});
+    }
+    onClose();
+  };
+
+  const toggleTag = (t) => { const s = new Set(tags); s.has(t)?s.delete(t):s.add(t); setTags(s); };
+
+  return (
+    <Modal open={open} onClose={onClose} title={meal?'Edit Meal':'Add New Meal'}>
+      <div className="space-y-4">
+        <div>
+          <label className="text-sm font-medium text-gray-700 mb-1 block">Meal Name *</label>
+          <input value={name} onChange={e=>setName(e.target.value)} className="w-full px-4 py-2.5 border border-gray-200 rounded-xl text-sm focus:ring-2 focus:ring-brand-500 outline-none" placeholder="e.g. Chicken Stir Fry" autoFocus />
+        </div>
+        <div className="grid grid-cols-2 gap-3">
+          <div>
+            <label className="text-sm font-medium text-gray-700 mb-1 block">Cuisine</label>
+            <select value={cuisine} onChange={e=>setCuisine(e.target.value)} className="w-full px-3 py-2.5 border border-gray-200 rounded-xl text-sm bg-white focus:ring-2 focus:ring-brand-500 outline-none">
+              {CUISINES.map(c => <option key={c}>{c}</option>)}
+            </select>
+          </div>
+          <div>
+            <label className="text-sm font-medium text-gray-700 mb-1 block">Prep Time (min)</label>
+            <input type="number" value={prepTime} onChange={e=>setPrepTime(+e.target.value)} className="w-full px-3 py-2.5 border border-gray-200 rounded-xl text-sm focus:ring-2 focus:ring-brand-500 outline-none" />
+          </div>
+        </div>
+        <div>
+          <label className="text-sm font-medium text-gray-700 mb-1 block">Tags</label>
+          <div className="flex flex-wrap gap-1.5">
+            {TAGS.map(t => (
+              <button key={t} onClick={()=>toggleTag(t)} className={`text-xs px-2.5 py-1 rounded-full border transition ${tags.has(t)?'bg-brand-500 text-white border-brand-500':'bg-white text-gray-500 border-gray-200 hover:border-gray-300'}`}>{t}</button>
+            ))}
+          </div>
+        </div>
+        <div className="flex gap-4">
+          <label className="flex items-center gap-2 text-sm text-gray-600 cursor-pointer">
+            <input type="checkbox" checked={toddlerSafe} onChange={e=>setToddlerSafe(e.target.checked)} className="rounded border-gray-300 text-green-500 focus:ring-green-500" /> Toddler-safe
+          </label>
+          <label className="flex items-center gap-2 text-sm text-gray-600 cursor-pointer">
+            <input type="checkbox" checked={adultOnly} onChange={e=>setAdultOnly(e.target.checked)} className="rounded border-gray-300 text-orange-500 focus:ring-orange-500" /> Adult-only
+          </label>
+        </div>
+        <div className="flex justify-end gap-2 pt-2">
+          <button onClick={onClose} className="px-4 py-2.5 text-sm text-gray-600 hover:bg-gray-100 rounded-xl transition">Cancel</button>
+          <button onClick={save} disabled={!name.trim()} className="px-6 py-2.5 bg-brand-500 text-white rounded-xl text-sm font-medium hover:bg-brand-600 transition disabled:opacity-40">{meal?'Save Changes':'Add Meal'}</button>
+        </div>
+      </div>
+    </Modal>
+  );
+};
+
+// ── RESTAURANTS PAGE ────────────────────────────────────────────
+const Restaurants = () => {
+  const { state, dispatch } = useApp();
+  const [showAdd, setShowAdd] = useState(false);
+  const [editRest, setEditRest] = useState(null);
+  const [search, setSearch] = useState('');
+
+  const filtered = state.restaurants.filter(r => r.name.toLowerCase().includes(search.toLowerCase()));
+  const favorites = filtered.filter(r => r.isFavorite);
+  const others = filtered.filter(r => !r.isFavorite);
+
+  return (
+    <div className="fade-in">
+      <div className="flex items-center justify-between mb-6">
+        <div>
+          <h1 className="text-2xl font-bold">Restaurants</h1>
+          <p className="text-sm text-gray-400 mt-0.5">{state.restaurants.length} saved · {state.restaurants.filter(r=>r.isFavorite).length} favorites</p>
+        </div>
+        <button onClick={()=>{setEditRest(null);setShowAdd(true)}} className="flex items-center gap-2 px-4 py-2.5 bg-restaurant text-white rounded-xl text-sm font-medium hover:bg-restaurant-dark transition shadow-lg shadow-restaurant/20">
+          <Icon name="plus" size={16} /> Add Restaurant
+        </button>
+      </div>
+
+      <div className="relative mb-4">
+        <Icon name="search" size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+        <input value={search} onChange={e=>setSearch(e.target.value)} className="w-full pl-9 pr-4 py-2 border border-gray-200 rounded-xl text-sm focus:ring-2 focus:ring-restaurant outline-none bg-white" placeholder="Search restaurants..." />
+      </div>
+
+      {favorites.length > 0 && (
+        <div className="mb-6">
+          <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wide mb-3">Favorites</h2>
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+            {favorites.map(r => <RestaurantCard key={r.id} restaurant={r} onEdit={()=>{setEditRest(r);setShowAdd(true)}} />)}
+          </div>
+        </div>
+      )}
+
+      {others.length > 0 && (
+        <div>
+          {favorites.length > 0 && <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wide mb-3">All Restaurants</h2>}
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+            {others.map(r => <RestaurantCard key={r.id} restaurant={r} onEdit={()=>{setEditRest(r);setShowAdd(true)}} />)}
+          </div>
+        </div>
+      )}
+
+      {filtered.length === 0 && <p className="text-center text-gray-400 py-12">No restaurants saved yet. Add your first one!</p>}
+
+      {showAdd && <RestaurantForm open={showAdd} onClose={()=>{setShowAdd(false);setEditRest(null)}} restaurant={editRest} />}
+    </div>
+  );
+};
+
+const RestaurantCard = ({restaurant: r, onEdit}) => {
+  const { dispatch } = useApp();
+  return (
+    <div className="bg-white rounded-2xl border border-gray-100 p-4 hover:shadow-md transition group">
+      <div className="flex items-start justify-between mb-1">
+        <h3 className="font-semibold text-gray-900 truncate flex-1">{r.name}</h3>
+        <div className="flex gap-1 items-center">
+          <button onClick={()=>dispatch({type:'TOGGLE_FAV', payload:r.id})} className={`p-1.5 rounded-lg transition ${r.isFavorite?'text-red-500 hover:bg-red-50':'text-gray-300 hover:text-red-400 opacity-0 group-hover:opacity-100'}`}>
+            <Icon name={r.isFavorite?'heartFill':'heart'} size={14} />
+          </button>
+          <button onClick={onEdit} className="p-1.5 rounded-lg hover:bg-gray-100 text-gray-400 opacity-0 group-hover:opacity-100 transition"><Icon name="edit" size={14} /></button>
+          <button onClick={()=>dispatch({type:'DELETE_RESTAURANT',payload:r.id})} className="p-1.5 rounded-lg hover:bg-red-50 text-red-400 opacity-0 group-hover:opacity-100 transition"><Icon name="trash" size={14} /></button>
+        </div>
+      </div>
+      <p className="text-sm text-gray-400">{r.cuisine} · {r.priceRange}</p>
+      {r.openDays && r.openDays.length < 7 && (
+        <div className="flex gap-0.5 mt-2">
+          {ALL_DAYS.map(d => (
+            <span key={d} className={`text-[10px] px-1.5 py-0.5 rounded font-medium ${r.openDays.includes(d) ? 'bg-restaurant-light text-restaurant-dark' : 'bg-gray-100 text-gray-300 line-through'}`}>{d}</span>
+          ))}
+        </div>
+      )}
+      {r.notes && <p className="text-sm text-gray-500 mt-2 line-clamp-2">{r.notes}</p>}
+    </div>
+  );
+};
+
+const ALL_DAYS = ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
+
+const RestaurantForm = ({open, onClose, restaurant}) => {
+  const { dispatch } = useApp();
+  const [name, setName] = useState(restaurant?.name || '');
+  const [cuisine, setCuisine] = useState(restaurant?.cuisine || 'Other');
+  const [priceRange, setPriceRange] = useState(restaurant?.priceRange || '$$');
+  const [notes, setNotes] = useState(restaurant?.notes || '');
+  const [isFavorite, setIsFavorite] = useState(restaurant?.isFavorite || false);
+  const [openDays, setOpenDays] = useState(restaurant?.openDays || ALL_DAYS);
+
+  const toggleDay = (day) => setOpenDays(prev =>
+    prev.includes(day) ? prev.filter(d => d !== day) : [...prev, day]
+  );
+
+  const save = () => {
+    if (!name.trim()) return;
+    const data = { name: name.trim(), cuisine, priceRange, notes, isFavorite, openDays };
+    if (restaurant) {
+      dispatch({type:'UPDATE_RESTAURANT', payload:{id: restaurant.id, ...data}});
+    } else {
+      dispatch({type:'ADD_RESTAURANT', payload:{id: uid(), ...data, history: []}});
+    }
+    onClose();
+  };
+
+  return (
+    <Modal open={open} onClose={onClose} title={restaurant?'Edit Restaurant':'Add Restaurant'}>
+      <div className="space-y-4">
+        <div>
+          <label className="text-sm font-medium text-gray-700 mb-1 block">Restaurant Name *</label>
+          <input value={name} onChange={e=>setName(e.target.value)} className="w-full px-4 py-2.5 border border-gray-200 rounded-xl text-sm focus:ring-2 focus:ring-restaurant outline-none" placeholder="e.g. Olive Garden" autoFocus />
+        </div>
+        <div className="grid grid-cols-2 gap-3">
+          <div>
+            <label className="text-sm font-medium text-gray-700 mb-1 block">Cuisine</label>
+            <select value={cuisine} onChange={e=>setCuisine(e.target.value)} className="w-full px-3 py-2.5 border border-gray-200 rounded-xl text-sm bg-white focus:ring-2 focus:ring-restaurant outline-none">
+              {CUISINES.map(c => <option key={c}>{c}</option>)}
+            </select>
+          </div>
+          <div>
+            <label className="text-sm font-medium text-gray-700 mb-1 block">Price Range</label>
+            <div className="flex gap-1">
+              {['$','$$','$$$','$$$$'].map(p => (
+                <button key={p} onClick={()=>setPriceRange(p)} className={`flex-1 py-2.5 rounded-xl text-sm font-medium transition border ${priceRange===p?'bg-restaurant text-white border-restaurant':'bg-white text-gray-500 border-gray-200 hover:border-gray-300'}`}>{p}</button>
+              ))}
+            </div>
+          </div>
+        </div>
+        <div>
+          <label className="text-sm font-medium text-gray-700 mb-2 block">Open Days</label>
+          <div className="flex gap-1">
+            {ALL_DAYS.map(day => (
+              <button key={day} type="button" onClick={()=>toggleDay(day)}
+                className={`flex-1 py-2 rounded-lg text-xs font-medium transition border ${openDays.includes(day) ? 'bg-restaurant text-white border-restaurant' : 'bg-white text-gray-400 border-gray-200 hover:border-gray-300'}`}>
+                {day}
+              </button>
+            ))}
+          </div>
+          {openDays.length === 0 && <p className="text-xs text-amber-500 mt-1">Select at least one open day.</p>}
+        </div>
+        <div>
+          <label className="text-sm font-medium text-gray-700 mb-1 block">Notes</label>
+          <textarea value={notes} onChange={e=>setNotes(e.target.value)} rows={2} className="w-full px-4 py-2.5 border border-gray-200 rounded-xl text-sm focus:ring-2 focus:ring-restaurant outline-none resize-none" placeholder="Optional notes..." />
+        </div>
+        <label className="flex items-center gap-2 text-sm text-gray-600 cursor-pointer">
+          <input type="checkbox" checked={isFavorite} onChange={e=>setIsFavorite(e.target.checked)} className="rounded border-gray-300 text-red-500 focus:ring-red-500" /> Add to favorites
+        </label>
+        <div className="flex justify-end gap-2 pt-2">
+          <button onClick={onClose} className="px-4 py-2.5 text-sm text-gray-600 hover:bg-gray-100 rounded-xl transition">Cancel</button>
+          <button onClick={save} disabled={!name.trim()} className="px-6 py-2.5 bg-restaurant text-white rounded-xl text-sm font-medium hover:bg-restaurant-dark transition disabled:opacity-40">{restaurant?'Save':'Add Restaurant'}</button>
+        </div>
+      </div>
+    </Modal>
+  );
+};
+
+// ── SETTINGS PAGE ───────────────────────────────────────────────
+const Settings = () => {
+  const { state, dispatch } = useApp();
+  const h = state.household;
+
+  const updateHousehold = (updates) => dispatch({type:'UPDATE_HOUSEHOLD', payload: updates});
+  const updateMember = (id, updates) => dispatch({type:'UPDATE_MEMBER', payload:{id, ...updates}});
+
+  return (
+    <div className="fade-in max-w-2xl">
+      <h1 className="text-2xl font-bold mb-6">Settings</h1>
+
+      {/* Household */}
+      <section className="bg-white rounded-2xl border border-gray-100 p-6 mb-6">
+        <h2 className="font-semibold text-lg mb-4">Household</h2>
+        <div className="mb-4">
+          <label className="text-sm font-medium text-gray-700 mb-1 block">Household Name</label>
+          <input value={h.name} onChange={e=>updateHousehold({name:e.target.value})} className="w-full px-4 py-2.5 border border-gray-200 rounded-xl text-sm focus:ring-2 focus:ring-brand-500 outline-none" />
+        </div>
+      </section>
+
+      {/* Members */}
+      <section className="bg-white rounded-2xl border border-gray-100 p-6 mb-6">
+        <h2 className="font-semibold text-lg mb-4 flex items-center gap-2"><Icon name="users" size={20} /> Members</h2>
+        <div className="space-y-4">
+          {h.members.map(m => (
+            <div key={m.id} className="p-4 bg-gray-50 rounded-xl">
+              <div className="flex items-center gap-3 mb-3">
+                <span className="text-xl">{m.type==='adult'?'👤':'👶'}</span>
+                <input value={m.name} onChange={e=>updateMember(m.id,{name:e.target.value})} className="flex-1 px-3 py-2 bg-white border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-brand-500 outline-none" />
+                <span className="text-xs text-gray-400 capitalize">{m.type}{m.age?` · ${m.age}yr`:''}</span>
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                <div>
+                  <label className="text-xs font-medium text-gray-500 mb-1 block">Dietary Preferences</label>
+                  <input value={m.preferences.dietary.join(', ')} onChange={e=>updateMember(m.id,{preferences:{...m.preferences,dietary:e.target.value.split(',').map(s=>s.trim()).filter(Boolean)}})}
+                    className="w-full px-2 py-1.5 bg-white border border-gray-200 rounded-lg text-xs focus:ring-2 focus:ring-brand-500 outline-none" placeholder="Vegetarian, etc." />
+                </div>
+                <div>
+                  <label className="text-xs font-medium text-gray-500 mb-1 block">Dislikes</label>
+                  <input value={m.preferences.dislikes.join(', ')} onChange={e=>updateMember(m.id,{preferences:{...m.preferences,dislikes:e.target.value.split(',').map(s=>s.trim()).filter(Boolean)}})}
+                    className="w-full px-2 py-1.5 bg-white border border-gray-200 rounded-lg text-xs focus:ring-2 focus:ring-brand-500 outline-none" placeholder="Mushrooms, etc." />
+                </div>
+                <div>
+                  <label className="text-xs font-medium text-gray-500 mb-1 block">Allergens</label>
+                  <input value={m.preferences.allergens.join(', ')} onChange={e=>updateMember(m.id,{preferences:{...m.preferences,allergens:e.target.value.split(',').map(s=>s.trim()).filter(Boolean)}})}
+                    className="w-full px-2 py-1.5 bg-white border border-gray-200 rounded-lg text-xs focus:ring-2 focus:ring-brand-500 outline-none" placeholder="Nuts, dairy, etc." />
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      </section>
+
+      {/* Repetition Avoidance */}
+      <section className="bg-white rounded-2xl border border-gray-100 p-6 mb-6">
+        <h2 className="font-semibold text-lg mb-4">Repetition Avoidance</h2>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <div>
+            <label className="text-sm font-medium text-gray-700 mb-2 block">Window (days)</label>
+            <div className="flex gap-2">
+              {[7,14,21,30].map(w => (
+                <button key={w} onClick={()=>updateHousehold({repetitionWindow:w})}
+                  className={`flex-1 py-2.5 rounded-xl text-sm font-medium transition border ${h.repetitionWindow===w?'bg-brand-500 text-white border-brand-500':'bg-white text-gray-500 border-gray-200 hover:border-gray-300'}`}>{w}d</button>
+              ))}
+            </div>
+          </div>
+          <div>
+            <label className="text-sm font-medium text-gray-700 mb-2 block">Mode</label>
+            <div className="flex gap-2">
+              <button onClick={()=>updateHousehold({repetitionMode:'warn'})}
+                className={`flex-1 py-2.5 rounded-xl text-sm font-medium transition border ${h.repetitionMode==='warn'?'bg-amber-500 text-white border-amber-500':'bg-white text-gray-500 border-gray-200 hover:border-gray-300'}`}>Warn</button>
+              <button onClick={()=>updateHousehold({repetitionMode:'block'})}
+                className={`flex-1 py-2.5 rounded-xl text-sm font-medium transition border ${h.repetitionMode==='block'?'bg-red-500 text-white border-red-500':'bg-white text-gray-500 border-gray-200 hover:border-gray-300'}`}>Block</button>
+            </div>
+          </div>
+        </div>
+        <p className="text-xs text-gray-400 mt-3">
+          {h.repetitionMode === 'warn' ? 'Meals within the window will show a yellow warning but can still be added.' : 'Meals within the window will be blocked from being added.'}
+        </p>
+      </section>
+
+      {/* Data */}
+      <section className="bg-white rounded-2xl border border-gray-100 p-6">
+        <h2 className="font-semibold text-lg mb-4">Data</h2>
+        <div className="flex gap-3">
+          <button onClick={()=>{if(confirm('Reset all data? This cannot be undone.')){safeLocalRemove('familyplate');fetch(FIREBASE_URL,{method:'DELETE'}).finally(()=>location.reload());}}}
+            className="px-4 py-2.5 text-sm text-red-600 border border-red-200 rounded-xl hover:bg-red-50 transition">Reset All Data</button>
+        </div>
+      </section>
+    </div>
+  );
+};
+
+// ── NAVIGATION ──────────────────────────────────────────────────
+const NAV_ITEMS = [
+  {id:'calendar', label:'Plan', icon:'calendar'},
+  {id:'library', label:'Library', icon:'book'},
+  {id:'restaurants', label:'Restaurants', icon:'store'},
+  {id:'settings', label:'Settings', icon:'settings'},
+];
+
+const Sidebar = ({page, setPage}) => (
+  <aside className="hidden md:flex flex-col w-64 bg-white border-r border-gray-100 min-h-screen">
+    <div className="p-6 border-b border-gray-100">
+      <div className="flex items-center gap-3">
+        <span className="text-2xl">🍽️</span>
+        <div>
+          <h2 className="font-bold text-gray-900">FamilyPlate</h2>
+          <p className="text-xs text-gray-400">Family Meal Planner</p>
+        </div>
+      </div>
+    </div>
+    <nav className="flex-1 p-4 space-y-1">
+      {NAV_ITEMS.map(n => (
+        <button key={n.id} onClick={()=>setPage(n.id)}
+          className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-medium transition ${page===n.id?'bg-brand-50 text-brand-600':'text-gray-500 hover:bg-gray-50 hover:text-gray-700'}`}>
+          <Icon name={n.icon} size={18} /> {n.label}
+        </button>
+      ))}
+    </nav>
+  </aside>
+);
+
+const MobileNav = ({page, setPage}) => (
+  <nav className="md:hidden fixed bottom-0 left-0 right-0 bg-white border-t border-gray-100 z-40 px-2 pb-[env(safe-area-inset-bottom)]">
+    <div className="flex">
+      {NAV_ITEMS.map(n => (
+        <button key={n.id} onClick={()=>setPage(n.id)}
+          className={`flex-1 flex flex-col items-center py-2.5 text-xs font-medium transition ${page===n.id?'text-brand-600':'text-gray-400'}`}>
+          <Icon name={n.icon} size={20} />
+          <span className="mt-0.5">{n.label}</span>
+        </button>
+      ))}
+    </div>
+  </nav>
+);
+
+const MobileHeader = ({page, onMenuToggle}) => (
+  <header className="md:hidden flex items-center justify-between px-4 py-3 bg-white border-b border-gray-100 sticky top-0 z-30">
+    <div className="flex items-center gap-2">
+      <span className="text-xl">🍽️</span>
+      <span className="font-bold text-gray-900">FamilyPlate</span>
+    </div>
+  </header>
+);
+
+// ── REDUCER ─────────────────────────────────────────────────────
+function appReducer(state, action) {
+  switch(action.type) {
+    case 'LOAD': {
+      const normalized = normalizeFirebaseData(action.payload) || action.payload;
+      return {...EMPTY_STATE, ...normalized};
+    }
+    case 'SETUP': return {...state, ...action.payload};
+    case 'ADD_MEAL': return {...state, meals: [...state.meals, action.payload]};
+    case 'UPDATE_MEAL': return {...state, meals: state.meals.map(m => m.id===action.payload.id ? {...m,...action.payload} : m)};
+    case 'DELETE_MEAL': return {...state, meals: state.meals.filter(m => m.id !== action.payload)};
+    case 'ADD_RESTAURANT': return {...state, restaurants: [...state.restaurants, action.payload]};
+    case 'UPDATE_RESTAURANT': return {...state, restaurants: state.restaurants.map(r => r.id===action.payload.id ? {...r,...action.payload} : r)};
+    case 'DELETE_RESTAURANT': return {...state, restaurants: state.restaurants.filter(r => r.id !== action.payload)};
+    case 'TOGGLE_FAV': return {...state, restaurants: state.restaurants.map(r => r.id===action.payload ? {...r, isFavorite:!r.isFavorite} : r)};
+    case 'SET_SLOT': {
+      const {date, slot, data} = action.payload;
+      const plans = {...state.plans};
+      if (!plans[date]) plans[date] = {};
+      plans[date] = {...plans[date], [slot]: data};
+      return {...state, plans};
+    }
+    case 'SWAP_SLOTS': {
+      const { from, to } = action.payload;
+      const fromData = state.plans[from.date]?.[from.slot] || { type: 'empty' };
+      const toData   = state.plans[to.date]?.[to.slot]   || { type: 'empty' };
+      const plans = { ...state.plans };
+      if (!plans[from.date]) plans[from.date] = {};
+      if (!plans[to.date])   plans[to.date]   = {};
+      plans[from.date] = { ...plans[from.date], [from.slot]: toData };
+      plans[to.date]   = { ...plans[to.date],   [to.slot]:   fromData };
+      return { ...state, plans };
+    }
+    case 'UPDATE_HOUSEHOLD': return {...state, household: {...state.household, ...action.payload}};
+    case 'UPDATE_MEMBER': {
+      const {id, ...updates} = action.payload;
+      return {...state, household: {...state.household, members: state.household.members.map(m => m.id===id ? {...m,...updates} : m)}};
+    }
+    default: return state;
+  }
+}
+
+// ── APP ─────────────────────────────────────────────────────────
+const App = () => {
+  const [state, dispatch] = React.useReducer(appReducer, INITIAL_STATE);
+  const [page, setPage] = useState('calendar');
+  const [syncing, setSyncing] = useState(true);
+
+  // On mount, fetch latest data from Firebase (authoritative source)
+  useEffect(() => {
+    loadFromFirebase().then(data => {
+      if (data) dispatch({ type: 'LOAD', payload: data });
+      setSyncing(false);
+    }).catch(() => setSyncing(false));
+  }, []);
+
+  // Persist to localStorage + Firebase on every state change
+  useEffect(() => { if (!syncing) saveState(state); }, [state]);
+
+  if (syncing) return (
+    <div className="min-h-screen bg-gray-50 flex items-center justify-center">
+      <div className="text-center">
+        <div className="text-4xl mb-3">🍽️</div>
+        <p className="text-gray-500 text-sm">Loading family data…</p>
+      </div>
+    </div>
+  );
+
+  if (!state.onboarded) {
+    return (
+      <AppContext.Provider value={{state, dispatch}}>
+        <Onboarding />
+      </AppContext.Provider>
+    );
+  }
+
+  const pages = {
+    calendar: <WeeklyCalendar />,
+    library: <MealLibrary />,
+    restaurants: <Restaurants />,
+    settings: <Settings />,
+  };
+
+  return (
+    <AppContext.Provider value={{state, dispatch}}>
+      <div className="flex min-h-screen bg-gray-50">
+        <Sidebar page={page} setPage={setPage} />
+        <main className="flex-1 md:p-8 p-4 pb-24 md:pb-8 max-w-6xl">
+          <MobileHeader page={page} />
+          {pages[page]}
+        </main>
+        <MobileNav page={page} setPage={setPage} />
+      </div>
+    </AppContext.Provider>
+  );
+};
+
+// ── RENDER ──────────────────────────────────────────────────────
+const root = ReactDOM.createRoot(document.getElementById('root'));
+root.render(<PasswordGate><App /></PasswordGate>);
+  </script>
+</body>
+</html>
