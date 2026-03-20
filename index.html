@@ -1215,7 +1215,11 @@ const Settings = () => {
         body: JSON.stringify({firebaseUrl: FIREBASE_URL}),
       });
       const data = await res.json();
-      setTestResult({ok: data.success, msg: data.message || (data.success ? 'Test emails sent!' : 'Failed to send.')});
+      setTestResult({
+        ok: data.success,
+        msg: data.message || (data.success ? 'Test emails sent!' : 'Failed to send.'),
+        results: Array.isArray(data.results) ? data.results : null,
+      });
     } catch(err) {
       setTestResult({ok: false, msg: 'Could not reach Cloud Functions. Check your setup.'});
     }
@@ -1370,18 +1374,37 @@ const Settings = () => {
         </div>
 
         {/* Test email button */}
-        <div className="flex items-center gap-3 pt-2 border-t border-gray-100">
-          <button
-            onClick={sendTestEmail}
-            disabled={testSending || (es.familyEmails||[]).filter(e=>e.enabled).length === 0}
-            className="px-4 py-2.5 text-sm font-medium border border-brand-200 text-brand-600 rounded-xl hover:bg-brand-50 transition disabled:opacity-40 flex items-center gap-2"
-          >
-            <Icon name="send" size={14} />
-            {testSending ? 'Sending...' : 'Send Test Email'}
-          </button>
-          {testResult && (
-            <p className={`text-xs ${testResult.ok ? 'text-green-600' : 'text-red-500'}`}>{testResult.msg}</p>
-          )}
+        <div className="pt-2 border-t border-gray-100 space-y-2">
+          <div className="flex flex-col sm:flex-row sm:items-start gap-3">
+            <button
+              onClick={sendTestEmail}
+              disabled={testSending || (es.familyEmails||[]).filter(e=>e.enabled).length === 0}
+              className="px-4 py-2.5 text-sm font-medium border border-brand-200 text-brand-600 rounded-xl hover:bg-brand-50 transition disabled:opacity-40 flex items-center gap-2 shrink-0"
+            >
+              <Icon name="send" size={14} />
+              {testSending ? 'Sending...' : 'Send Test Email'}
+            </button>
+            {testResult && (
+              <div className="flex-1 min-w-0">
+                <p className={`text-xs font-medium ${testResult.ok ? 'text-green-600' : 'text-red-500'}`}>{testResult.msg}</p>
+                {testResult.results && testResult.results.length > 0 && (
+                  <ul className="mt-2 text-xs text-gray-600 space-y-1 list-none pl-0">
+                    {testResult.results.map((r, i) => (
+                      <li key={i} className={`rounded-lg px-2 py-1.5 ${r.sent ? 'bg-green-50 text-green-800' : 'bg-red-50 text-red-700'}`}>
+                        <span className="font-medium">{r.email}</span>
+                        {r.sent ? (
+                          r.resendId ? <span className="text-green-600"> — ok (id: {r.resendId})</span> : <span className="text-green-600"> — sent</span>
+                        ) : (
+                          <span className="block mt-0.5 text-red-600 break-words">{r.error || 'Unknown error'}</span>
+                        )}
+                      </li>
+                    ))}
+                  </ul>
+                )}
+                <p className="text-[10px] text-gray-400 mt-2">Tip: you can also open DevTools → Network, click the <code className="bg-gray-100 px-0.5 rounded">sendTestEmail</code> request, and read the JSON response under “Response”.</p>
+              </div>
+            )}
+          </div>
         </div>
       </section>
 
