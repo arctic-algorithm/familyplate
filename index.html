@@ -36,9 +36,8 @@
 </head>
 <body class="bg-gray-50 text-gray-900">
   <div id="root"></div>
-  <!-- Set your Cloud Functions URL after deploying Firebase Functions -->
-  <!-- Example: window.CLOUD_FUNCTIONS_URL = "https://us-central1-familyplate-b4ba9.cloudfunctions.net"; -->
-  <script>window.CLOUD_FUNCTIONS_URL = "";</script>
+  <!-- Firebase Functions base URL used by test-email features -->
+  <script>window.CLOUD_FUNCTIONS_URL = "https://us-central1-familyplate-b4ba9.cloudfunctions.net";</script>
   <script type="text/babel">
 // ── IMPORTS & SHORTCUTS ─────────────────────────────────────────
 const { useState, useEffect, useContext, createContext, useCallback, useMemo, useRef } = React;
