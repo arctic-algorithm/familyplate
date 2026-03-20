@@ -1,0 +1,12 @@
+{
+  "rules": {
+    "familyplate": {
+      ".read": true,
+      ".write": true,
+      "emailTokens": {
+        ".read": true,
+        ".write": true
+      }
+    }
+  }
+}

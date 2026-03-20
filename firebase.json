@@ -1,0 +1,45 @@
+{
+  "functions": [
+    {
+      "source": "functions",
+      "codebase": "default",
+      "ignore": [
+        "node_modules",
+        ".git",
+        "firebase-debug.log",
+        "firebase-debug.*.log",
+        "*.local"
+      ]
+    }
+  ],
+  "database": {
+    "rules": "database.rules.json"
+  },
+  "hosting": {
+    "public": ".",
+    "ignore": [
+      "firebase.json",
+      "**/.*",
+      "**/node_modules/**",
+      "functions/**"
+    ],
+    "rewrites": [
+      {
+        "source": "/api/confirmYesterday",
+        "function": "confirmYesterday"
+      },
+      {
+        "source": "/api/unsubscribe",
+        "function": "unsubscribe"
+      },
+      {
+        "source": "/api/sendTestEmail",
+        "function": "sendTestEmail"
+      },
+      {
+        "source": "**",
+        "destination": "/index.html"
+      }
+    ]
+  }
+}

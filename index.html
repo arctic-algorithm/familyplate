@@ -36,6 +36,7 @@
 </head>
 <body class="bg-gray-50 text-gray-900">
   <div id="root"></div>
+<<<<<<< HEAD
   <script type="text/babel">
 // ── IMPORTS & SHORTCUTS ─────────────────────────────────────────
 const { useState, useEffect, useContext, createContext, useCallback, useMemo, useRef } = React;
@@ -112,6 +113,12 @@ function PasswordGate({ children }) {
   );
 }
 
+=======
+  <script type="text/babel" data-type="module">
+// ── IMPORTS & SHORTCUTS ─────────────────────────────────────────
+const { useState, useEffect, useContext, createContext, useCallback, useMemo, useRef } = React;
+
+>>>>>>> 37a92cf (Initial FamilyPlate app)
 // ── UTILITY FUNCTIONS ───────────────────────────────────────────
 const uid = () => Math.random().toString(36).slice(2, 10);
 const today = () => { const d = new Date(); return d.toISOString().split('T')[0]; };
@@ -181,6 +188,7 @@ const DEFAULT_HOUSEHOLD = {
   repetitionMode: 'warn',
 };
 
+<<<<<<< HEAD
 // ── FIREBASE SYNC ────────────────────────────────────────────────
 const FIREBASE_URL = 'https://familyplate-b4ba9-default-rtdb.firebaseio.com/familyplate.json';
 
@@ -294,11 +302,25 @@ function loadCachedState() {
       const parsed = JSON.parse(raw);
       return normalizeFirebaseData(parsed) || parsed;
     }
+=======
+function loadState() {
+  try {
+    const raw = localStorage.getItem('familyplate');
+    if (raw) return JSON.parse(raw);
+>>>>>>> 37a92cf (Initial FamilyPlate app)
   } catch(e) {}
   return null;
 }
 
+<<<<<<< HEAD
 const EMPTY_STATE = {
+=======
+function saveState(state) {
+  try { localStorage.setItem('familyplate', JSON.stringify(state)); } catch(e) {}
+}
+
+const INITIAL_STATE = loadState() || {
+>>>>>>> 37a92cf (Initial FamilyPlate app)
   household: DEFAULT_HOUSEHOLD,
   meals: [],
   restaurants: [],
@@ -306,8 +328,11 @@ const EMPTY_STATE = {
   onboarded: false,
 };
 
+<<<<<<< HEAD
 const INITIAL_STATE = loadCachedState() || EMPTY_STATE;
 
+=======
+>>>>>>> 37a92cf (Initial FamilyPlate app)
 const AppContext = createContext();
 
 function useApp() { return useContext(AppContext); }
@@ -429,11 +454,16 @@ const Onboarding = () => {
 };
 
 // ── MEAL SLOT COMPONENT ─────────────────────────────────────────
+<<<<<<< HEAD
 const MealSlot = ({date, slotType, plan, onAdd, onRemove, onSuggest, compact, dragSource, onDragStart, onDragEnd, onDrop}) => {
+=======
+const MealSlot = ({date, slotType, plan, onAdd, onRemove, onSuggest, compact}) => {
+>>>>>>> 37a92cf (Initial FamilyPlate app)
   const { state } = useApp();
   const slot = plan?.[slotType];
   const slotLabel = slotType === 'breakfast' ? 'B' : slotType === 'lunch' ? 'L' : 'D';
   const slotFull = slotType === 'breakfast' ? 'Breakfast' : slotType === 'lunch' ? 'Lunch' : 'Dinner';
+<<<<<<< HEAD
   const [isDragOver, setIsDragOver] = useState(false);
 
   const isSelf = dragSource && dragSource.date === date && dragSource.slot === slotType;
@@ -452,6 +482,12 @@ const MealSlot = ({date, slotType, plan, onAdd, onRemove, onSuggest, compact, dr
         className={`group border border-dashed rounded-xl transition cursor-pointer ${compact?'p-2':'p-3'} ${isDragOver ? 'border-brand-400 bg-brand-50 scale-[1.02]' : 'border-gray-200 hover:border-brand-400 hover:bg-brand-50/30'}`}
         onClick={()=>{ if (!isDragging) onAdd(date, slotType); }}
       >
+=======
+
+  if (!slot || slot.type === 'empty') {
+    return (
+      <div className={`group border border-dashed border-gray-200 rounded-xl hover:border-brand-400 hover:bg-brand-50/30 transition cursor-pointer ${compact?'p-2':'p-3'}`} onClick={()=>onAdd(date, slotType)}>
+>>>>>>> 37a92cf (Initial FamilyPlate app)
         <div className="flex items-center justify-between">
           {!compact && <span className="text-xs font-medium text-gray-400 uppercase">{slotFull}</span>}
           <div className="flex gap-1">
@@ -461,7 +497,11 @@ const MealSlot = ({date, slotType, plan, onAdd, onRemove, onSuggest, compact, dr
             <span className="p-1 rounded-md opacity-0 group-hover:opacity-100 text-gray-400"><Icon name="plus" size={14} /></span>
           </div>
         </div>
+<<<<<<< HEAD
         {compact && <span className="text-xs text-gray-300">{isDragOver ? '↓' : slotLabel}</span>}
+=======
+        {compact && <span className="text-xs text-gray-300">{slotLabel}</span>}
+>>>>>>> 37a92cf (Initial FamilyPlate app)
       </div>
     );
   }
@@ -473,6 +513,7 @@ const MealSlot = ({date, slotType, plan, onAdd, onRemove, onSuggest, compact, dr
   const name = item?.name || 'Unknown';
 
   // Repetition check
+<<<<<<< HEAD
   const rWin = state.household.repetitionWindow;
   const lastPlanned = isHome ? getLastPlanned(state.plans, slot.mealId, date) : getLastPlannedRestaurant(state.plans, slot.mealId, date);
   const withinWindow = lastPlanned && daysSince(lastPlanned) < rWin && lastPlanned !== date;
@@ -485,6 +526,14 @@ const MealSlot = ({date, slotType, plan, onAdd, onRemove, onSuggest, compact, dr
       {...dropHandlers}
       className={`rounded-xl border transition relative group ${compact?'p-2':'p-3'} ${isHome?'bg-home-light/50 border-home/20':'bg-restaurant-light/50 border-restaurant/20'} ${isSelf ? 'opacity-40 scale-95' : ''} ${isDragOver ? 'ring-2 ring-brand-400 scale-[1.02]' : ''} cursor-grab active:cursor-grabbing`}
     >
+=======
+  const window = state.household.repetitionWindow;
+  const lastPlanned = isHome ? getLastPlanned(state.plans, slot.mealId, date) : getLastPlannedRestaurant(state.plans, slot.mealId, date);
+  const withinWindow = lastPlanned && daysSince(lastPlanned) < window && lastPlanned !== date;
+
+  return (
+    <div className={`rounded-xl border transition relative group ${compact?'p-2':'p-3'} ${isHome?'bg-home-light/50 border-home/20':'bg-restaurant-light/50 border-restaurant/20'}`}>
+>>>>>>> 37a92cf (Initial FamilyPlate app)
       <div className="flex items-start justify-between gap-1">
         <div className="min-w-0 flex-1">
           {!compact && <span className="text-xs font-medium uppercase text-gray-400 block mb-0.5">{slotFull}</span>}
@@ -496,7 +545,11 @@ const MealSlot = ({date, slotType, plan, onAdd, onRemove, onSuggest, compact, dr
         </button>
       </div>
       {withinWindow && (
+<<<<<<< HEAD
         <div className="flex items-center gap-1 mt-1.5 text-amber-600" title={`Last planned ${daysSince(lastPlanned)} days ago (window: ${rWin} days)`}>
+=======
+        <div className="flex items-center gap-1 mt-1.5 text-amber-600" title={`Last planned ${daysSince(lastPlanned)} days ago (window: ${window} days)`}>
+>>>>>>> 37a92cf (Initial FamilyPlate app)
           <Icon name="alert" size={12} />
           <span className="text-xs font-medium">Repeat</span>
         </div>
@@ -534,11 +587,17 @@ const AddMealModal = ({open, onClose, date, slotType, onSelect}) => {
   const [tab, setTab] = useState('home');
   const [search, setSearch] = useState('');
   const [quickName, setQuickName] = useState('');
+<<<<<<< HEAD
+=======
+  const [perPerson, setPerPerson] = useState(false);
+  const [assignments, setAssignments] = useState({});
+>>>>>>> 37a92cf (Initial FamilyPlate app)
 
   const filteredMeals = useMemo(() => {
     return state.meals.filter(m => m.name.toLowerCase().includes(search.toLowerCase()) || m.cuisine.toLowerCase().includes(search.toLowerCase()));
   }, [state.meals, search]);
 
+<<<<<<< HEAD
   const dateDayName = dayName(date);
   const filteredRestaurants = useMemo(() => {
     return state.restaurants.filter(r => {
@@ -547,6 +606,11 @@ const AddMealModal = ({open, onClose, date, slotType, onSelect}) => {
       return true;
     });
   }, [state.restaurants, search, dateDayName]);
+=======
+  const filteredRestaurants = useMemo(() => {
+    return state.restaurants.filter(r => r.name.toLowerCase().includes(search.toLowerCase()));
+  }, [state.restaurants, search]);
+>>>>>>> 37a92cf (Initial FamilyPlate app)
 
   const quickAdd = () => {
     if (!quickName.trim()) return;
@@ -557,8 +621,24 @@ const AddMealModal = ({open, onClose, date, slotType, onSelect}) => {
     onClose();
   };
 
+<<<<<<< HEAD
   const selectMeal = (mealId) => { onSelect(date, slotType, 'home', mealId); onClose(); };
   const selectRestaurant = (restId) => { onSelect(date, slotType, 'restaurant', restId); onClose(); };
+=======
+  const selectMeal = (mealId) => {
+    if (perPerson) {
+      onSelect(date, slotType, 'home', mealId, assignments);
+    } else {
+      onSelect(date, slotType, 'home', mealId);
+    }
+    onClose();
+  };
+
+  const selectRestaurant = (restId) => {
+    onSelect(date, slotType, 'restaurant', restId);
+    onClose();
+  };
+>>>>>>> 37a92cf (Initial FamilyPlate app)
 
   const slotFull = slotType === 'breakfast' ? 'Breakfast' : slotType === 'lunch' ? 'Lunch' : 'Dinner';
 
@@ -582,12 +662,29 @@ const AddMealModal = ({open, onClose, date, slotType, onSelect}) => {
         <input value={search} onChange={e=>setSearch(e.target.value)} className="w-full pl-9 pr-4 py-2 border border-gray-200 rounded-xl text-sm focus:ring-2 focus:ring-brand-500 outline-none" placeholder={`Search ${tab==='home'?'meals':'restaurants'}...`} />
       </div>
 
+<<<<<<< HEAD
       {/* List */}
       <div className="space-y-2 max-h-[40vh] overflow-y-auto">
         {tab === 'home' && filteredMeals.map(m => {
           const rWin = state.household.repetitionWindow;
           const last = getLastPlanned(state.plans, m.id, date);
           const withinWindow = last && daysSince(last) < rWin;
+=======
+      {/* Per-person toggle */}
+      {tab === 'home' && (
+        <label className="flex items-center gap-2 mb-3 text-sm text-gray-600 cursor-pointer">
+          <input type="checkbox" checked={perPerson} onChange={e=>setPerPerson(e.target.checked)} className="rounded border-gray-300 text-brand-500 focus:ring-brand-500" />
+          Set different meals per person
+        </label>
+      )}
+
+      {/* List */}
+      <div className="space-y-2 max-h-[40vh] overflow-y-auto">
+        {tab === 'home' && filteredMeals.map(m => {
+          const window = state.household.repetitionWindow;
+          const last = getLastPlanned(state.plans, m.id, date);
+          const withinWindow = last && daysSince(last) < window;
+>>>>>>> 37a92cf (Initial FamilyPlate app)
           const blocked = withinWindow && state.household.repetitionMode === 'block';
           return (
             <button key={m.id} onClick={()=>!blocked&&selectMeal(m.id)} disabled={blocked}
@@ -613,6 +710,7 @@ const AddMealModal = ({open, onClose, date, slotType, onSelect}) => {
           </button>
         ))}
         {tab === 'home' && filteredMeals.length === 0 && <p className="text-sm text-gray-400 text-center py-8">No meals found. Add one with quick-add above!</p>}
+<<<<<<< HEAD
         {tab === 'restaurant' && filteredRestaurants.length === 0 && (
           <p className="text-sm text-gray-400 text-center py-8">
             {state.restaurants.length === 0
@@ -620,6 +718,9 @@ const AddMealModal = ({open, onClose, date, slotType, onSelect}) => {
               : `No restaurants open on ${dateDayName}. Edit a restaurant to update its open days.`}
           </p>
         )}
+=======
+        {tab === 'restaurant' && filteredRestaurants.length === 0 && <p className="text-sm text-gray-400 text-center py-8">No restaurants saved yet. Add one from the Restaurants tab.</p>}
+>>>>>>> 37a92cf (Initial FamilyPlate app)
       </div>
     </Modal>
   );
@@ -631,7 +732,11 @@ const SuggestModal = ({open, onClose, date, slotType, onSelect}) => {
   const [suggestions, setSuggestions] = useState([]);
 
   const generateSuggestions = useCallback(() => {
+<<<<<<< HEAD
     const rWin = state.household.repetitionWindow;
+=======
+    const window = state.household.repetitionWindow;
+>>>>>>> 37a92cf (Initial FamilyPlate app)
     const weekDates = getWeekDates(0);
     const weekCuisines = {};
     weekDates.forEach(d => {
@@ -647,7 +752,11 @@ const SuggestModal = ({open, onClose, date, slotType, onSelect}) => {
 
     const eligible = state.meals.filter(m => {
       const last = getLastPlanned(state.plans, m.id, date);
+<<<<<<< HEAD
       return !last || daysSince(last) >= rWin;
+=======
+      return !last || daysSince(last) >= window;
+>>>>>>> 37a92cf (Initial FamilyPlate app)
     });
 
     // Score: prefer underrepresented cuisines, variety
@@ -695,8 +804,12 @@ const WeeklyCalendar = () => {
   const [mobileDay, setMobileDay] = useState(0);
 
   const dates = useMemo(() => getWeekDates(weekOffset), [weekOffset]);
+<<<<<<< HEAD
 
   const [dragSource, setDragSource] = useState(null);
+=======
+  const isMobile = typeof window !== 'undefined' && window.innerWidth < 768;
+>>>>>>> 37a92cf (Initial FamilyPlate app)
 
   const handleSelect = (date, slot, type, mealId, perPerson) => {
     dispatch({type:'SET_SLOT', payload:{date, slot, data:{type, mealId, perPerson: perPerson || null}}});
@@ -704,6 +817,7 @@ const WeeklyCalendar = () => {
   const handleRemove = (date, slot) => {
     dispatch({type:'SET_SLOT', payload:{date, slot, data:{type:'empty'}}});
   };
+<<<<<<< HEAD
   const handleDragStart = (date, slot) => setDragSource({ date, slot });
   const handleDragEnd = () => setDragSource(null);
   const handleDrop = (toDate, toSlot) => {
@@ -713,6 +827,8 @@ const WeeklyCalendar = () => {
   };
 
   const slotProps = { dragSource, onDragStart: handleDragStart, onDragEnd: handleDragEnd, onDrop: handleDrop };
+=======
+>>>>>>> 37a92cf (Initial FamilyPlate app)
 
   const todayStr = today();
   const isThisWeek = dates.includes(todayStr);
@@ -749,8 +865,12 @@ const WeeklyCalendar = () => {
                     <MealSlot key={s} date={d} slotType={s} plan={plan} compact
                       onAdd={(date,slot)=>setAddModal({date,slot})}
                       onRemove={handleRemove}
+<<<<<<< HEAD
                       onSuggest={(date,slot)=>setSuggestModal({date,slot})}
                       {...slotProps} />
+=======
+                      onSuggest={(date,slot)=>setSuggestModal({date,slot})} />
+>>>>>>> 37a92cf (Initial FamilyPlate app)
                   ))}
                 </div>
               </div>
@@ -784,8 +904,12 @@ const WeeklyCalendar = () => {
                 <MealSlot key={s} date={d} slotType={s} plan={plan}
                   onAdd={(date,slot)=>setAddModal({date,slot})}
                   onRemove={handleRemove}
+<<<<<<< HEAD
                   onSuggest={(date,slot)=>setSuggestModal({date,slot})}
                   {...slotProps} />
+=======
+                  onSuggest={(date,slot)=>setSuggestModal({date,slot})} />
+>>>>>>> 37a92cf (Initial FamilyPlate app)
               ))}
             </div>
           );
@@ -1027,6 +1151,7 @@ const RestaurantCard = ({restaurant: r, onEdit}) => {
         </div>
       </div>
       <p className="text-sm text-gray-400">{r.cuisine} · {r.priceRange}</p>
+<<<<<<< HEAD
       {r.openDays && r.openDays.length < 7 && (
         <div className="flex gap-0.5 mt-2">
           {ALL_DAYS.map(d => (
@@ -1034,13 +1159,18 @@ const RestaurantCard = ({restaurant: r, onEdit}) => {
           ))}
         </div>
       )}
+=======
+>>>>>>> 37a92cf (Initial FamilyPlate app)
       {r.notes && <p className="text-sm text-gray-500 mt-2 line-clamp-2">{r.notes}</p>}
     </div>
   );
 };
 
+<<<<<<< HEAD
 const ALL_DAYS = ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
 
+=======
+>>>>>>> 37a92cf (Initial FamilyPlate app)
 const RestaurantForm = ({open, onClose, restaurant}) => {
   const { dispatch } = useApp();
   const [name, setName] = useState(restaurant?.name || '');
@@ -1048,6 +1178,7 @@ const RestaurantForm = ({open, onClose, restaurant}) => {
   const [priceRange, setPriceRange] = useState(restaurant?.priceRange || '$$');
   const [notes, setNotes] = useState(restaurant?.notes || '');
   const [isFavorite, setIsFavorite] = useState(restaurant?.isFavorite || false);
+<<<<<<< HEAD
   const [openDays, setOpenDays] = useState(restaurant?.openDays || ALL_DAYS);
 
   const toggleDay = (day) => setOpenDays(prev =>
@@ -1057,6 +1188,12 @@ const RestaurantForm = ({open, onClose, restaurant}) => {
   const save = () => {
     if (!name.trim()) return;
     const data = { name: name.trim(), cuisine, priceRange, notes, isFavorite, openDays };
+=======
+
+  const save = () => {
+    if (!name.trim()) return;
+    const data = { name: name.trim(), cuisine, priceRange, notes, isFavorite };
+>>>>>>> 37a92cf (Initial FamilyPlate app)
     if (restaurant) {
       dispatch({type:'UPDATE_RESTAURANT', payload:{id: restaurant.id, ...data}});
     } else {
@@ -1089,6 +1226,7 @@ const RestaurantForm = ({open, onClose, restaurant}) => {
           </div>
         </div>
         <div>
+<<<<<<< HEAD
           <label className="text-sm font-medium text-gray-700 mb-2 block">Open Days</label>
           <div className="flex gap-1">
             {ALL_DAYS.map(day => (
@@ -1101,6 +1239,8 @@ const RestaurantForm = ({open, onClose, restaurant}) => {
           {openDays.length === 0 && <p className="text-xs text-amber-500 mt-1">Select at least one open day.</p>}
         </div>
         <div>
+=======
+>>>>>>> 37a92cf (Initial FamilyPlate app)
           <label className="text-sm font-medium text-gray-700 mb-1 block">Notes</label>
           <textarea value={notes} onChange={e=>setNotes(e.target.value)} rows={2} className="w-full px-4 py-2.5 border border-gray-200 rounded-xl text-sm focus:ring-2 focus:ring-restaurant outline-none resize-none" placeholder="Optional notes..." />
         </div>
@@ -1202,7 +1342,11 @@ const Settings = () => {
       <section className="bg-white rounded-2xl border border-gray-100 p-6">
         <h2 className="font-semibold text-lg mb-4">Data</h2>
         <div className="flex gap-3">
+<<<<<<< HEAD
           <button onClick={()=>{if(confirm('Reset all data? This cannot be undone.')){safeLocalRemove('familyplate');fetch(FIREBASE_URL,{method:'DELETE'}).finally(()=>location.reload());}}}
+=======
+          <button onClick={()=>{if(confirm('Reset all data? This cannot be undone.')){localStorage.removeItem('familyplate');location.reload();}}}
+>>>>>>> 37a92cf (Initial FamilyPlate app)
             className="px-4 py-2.5 text-sm text-red-600 border border-red-200 rounded-xl hover:bg-red-50 transition">Reset All Data</button>
         </div>
       </section>
@@ -1266,10 +1410,13 @@ const MobileHeader = ({page, onMenuToggle}) => (
 // ── REDUCER ─────────────────────────────────────────────────────
 function appReducer(state, action) {
   switch(action.type) {
+<<<<<<< HEAD
     case 'LOAD': {
       const normalized = normalizeFirebaseData(action.payload) || action.payload;
       return {...EMPTY_STATE, ...normalized};
     }
+=======
+>>>>>>> 37a92cf (Initial FamilyPlate app)
     case 'SETUP': return {...state, ...action.payload};
     case 'ADD_MEAL': return {...state, meals: [...state.meals, action.payload]};
     case 'UPDATE_MEAL': return {...state, meals: state.meals.map(m => m.id===action.payload.id ? {...m,...action.payload} : m)};
@@ -1285,6 +1432,7 @@ function appReducer(state, action) {
       plans[date] = {...plans[date], [slot]: data};
       return {...state, plans};
     }
+<<<<<<< HEAD
     case 'SWAP_SLOTS': {
       const { from, to } = action.payload;
       const fromData = state.plans[from.date]?.[from.slot] || { type: 'empty' };
@@ -1296,6 +1444,8 @@ function appReducer(state, action) {
       plans[to.date]   = { ...plans[to.date],   [to.slot]:   fromData };
       return { ...state, plans };
     }
+=======
+>>>>>>> 37a92cf (Initial FamilyPlate app)
     case 'UPDATE_HOUSEHOLD': return {...state, household: {...state.household, ...action.payload}};
     case 'UPDATE_MEMBER': {
       const {id, ...updates} = action.payload;
@@ -1309,6 +1459,7 @@ function appReducer(state, action) {
 const App = () => {
   const [state, dispatch] = React.useReducer(appReducer, INITIAL_STATE);
   const [page, setPage] = useState('calendar');
+<<<<<<< HEAD
   const [syncing, setSyncing] = useState(true);
 
   // On mount, fetch latest data from Firebase (authoritative source)
@@ -1330,6 +1481,11 @@ const App = () => {
       </div>
     </div>
   );
+=======
+
+  // Persist to localStorage on every state change
+  useEffect(() => { saveState(state); }, [state]);
+>>>>>>> 37a92cf (Initial FamilyPlate app)
 
   if (!state.onboarded) {
     return (
@@ -1362,7 +1518,11 @@ const App = () => {
 
 // ── RENDER ──────────────────────────────────────────────────────
 const root = ReactDOM.createRoot(document.getElementById('root'));
+<<<<<<< HEAD
 root.render(<PasswordGate><App /></PasswordGate>);
+=======
+root.render(<App />);
+>>>>>>> 37a92cf (Initial FamilyPlate app)
   </script>
 </body>
 </html>
