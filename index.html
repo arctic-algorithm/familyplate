@@ -133,6 +133,41 @@ function getWeekDates(offset=0) {
   });
 }
 
+/**
+ * Four consecutive Monday–Sunday weeks: previous week, reference week, +2 ahead.
+ * fourWeekOffset shifts the reference Monday (0 = week containing today).
+ */
+function getFourWeekGrid(fourWeekOffset) {
+  const todayMon = new Date();
+  todayMon.setHours(12, 0, 0, 0);
+  todayMon.setDate(todayMon.getDate() - ((todayMon.getDay() + 6) % 7));
+  const refMonday = new Date(todayMon);
+  refMonday.setDate(todayMon.getDate() + fourWeekOffset * 7);
+  const startMonday = new Date(refMonday);
+  startMonday.setDate(refMonday.getDate() - 7);
+
+  const weeks = [];
+  for (let w = 0; w < 4; w++) {
+    const row = [];
+    const weekMon = new Date(startMonday);
+    weekMon.setDate(startMonday.getDate() + w * 7);
+    for (let i = 0; i < 7; i++) {
+      const cell = new Date(weekMon);
+      cell.setDate(weekMon.getDate() + i);
+      row.push(cell.toISOString().split('T')[0]);
+    }
+    weeks.push(row);
+  }
+  const first = weeks[0][0];
+  const last = weeks[3][6];
+  const a = new Date(first + 'T12:00:00');
+  const b = new Date(last + 'T12:00:00');
+  const label = `${a.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} – ${b.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}`;
+  return { weeks, label };
+}
+
+const WEEKDAY_LABELS_MON = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+
 function daysSince(dateStr) {
   if (!dateStr) return Infinity;
   const d = new Date(dateStr+'T12:00:00');
@@ -154,6 +189,7 @@ function mealUrlHref(raw) {
 
 const CUISINES = ['Italian','Mexican','Chinese','Japanese','Indian','Thai','American','Mediterranean','Korean','French','Vietnamese','Greek','Middle Eastern','Ethiopian','Other'];
 const TAGS = ['Quick (<30min)','Family-Friendly','Toddler-Safe','Vegetarian','Vegan','Gluten-Free','Dairy-Free','Nut-Free','Spicy','Comfort Food','Healthy','Meal Prep','One-Pot','Grilling','Baking'];
+const DAY_DESIGNATION_PRESETS = ['Birthday', 'Vacation', 'Holiday', 'Travel', 'Guests', 'Sick day', 'Party'];
 const COMMON_MEALS = [
   {name:'Spaghetti Bolognese',cuisine:'Italian',prepTime:40,tags:['Family-Friendly','Comfort Food']},
   {name:'Chicken Stir Fry',cuisine:'Chinese',prepTime:25,tags:['Quick (<30min)','Healthy']},
@@ -275,6 +311,7 @@ function normalizeFirebaseData(data) {
     restaurants: normRestaurants,
     household,
     plans: data.plans || {},
+    dayDesignations: normalizeDayDesignations(data.dayDesignations),
     onboarded: !!data.onboarded,
     emailSettings,
   };
@@ -334,11 +371,23 @@ const TIMEZONES = [
   'Australia/Sydney','Australia/Perth','Pacific/Auckland',
 ];
 
+function normalizeDayDesignations(raw) {
+  if (!raw || typeof raw !== 'object') return {};
+  const out = {};
+  for (const [k, v] of Object.entries(raw)) {
+    if (/^\d{4}-\d{2}-\d{2}$/.test(k) && typeof v === 'string' && v.trim()) {
+      out[k] = v.trim().slice(0, 80);
+    }
+  }
+  return out;
+}
+
 const EMPTY_STATE = {
   household: DEFAULT_HOUSEHOLD,
   meals: [],
   restaurants: [],
   plans: {},  // { 'YYYY-MM-DD': { breakfast: SlotData, lunch: SlotData, dinner: SlotData } }
+  dayDesignations: {}, // { 'YYYY-MM-DD': 'Birthday' | 'Vacation' | ... }
   onboarded: false,
   emailSettings: {
     familyEmails: [],   // [{id, name, email, enabled}]
@@ -473,7 +522,7 @@ const Onboarding = () => {
 };
 
 // ── MEAL SLOT COMPONENT ─────────────────────────────────────────
-const MealSlot = ({date, slotType, plan, onAdd, onRemove, onSuggest, compact, dragSource, onDragStart, onDragEnd, onDrop}) => {
+const MealSlot = ({date, slotType, plan, onAdd, onRemove, onSuggest, compact, micro, dragSource, onDragStart, onDragEnd, onDrop}) => {
   const { state } = useApp();
   const slot = plan?.[slotType];
   const slotLabel = slotType === 'breakfast' ? 'B' : slotType === 'lunch' ? 'L' : 'D';
@@ -490,6 +539,17 @@ const MealSlot = ({date, slotType, plan, onAdd, onRemove, onSuggest, compact, dr
   };
 
   if (!slot || slot.type === 'empty') {
+    if (micro) {
+      return (
+        <div
+          {...dropHandlers}
+          className={`group border border-dashed rounded-md px-0.5 py-0.5 flex items-center justify-center min-h-[18px] transition cursor-pointer ${isDragOver ? 'border-brand-400 bg-brand-50' : 'border-gray-200 hover:border-brand-400 hover:bg-brand-50/30'}`}
+          onClick={()=>{ if (!isDragging) onAdd(date, slotType); }}
+        >
+          <span className="text-[9px] text-gray-400 tabular-nums">{isDragOver ? '↓' : slotLabel}</span>
+        </div>
+      );
+    }
     return (
       <div
         {...dropHandlers}
@@ -527,34 +587,34 @@ const MealSlot = ({date, slotType, plan, onAdd, onRemove, onSuggest, compact, dr
       onDragStart={() => onDragStart(date, slotType)}
       onDragEnd={onDragEnd}
       {...dropHandlers}
-      className={`rounded-xl border transition relative group ${compact?'p-2':'p-3'} ${isHome?'bg-home-light/50 border-home/20':'bg-restaurant-light/50 border-restaurant/20'} ${isSelf ? 'opacity-40 scale-95' : ''} ${isDragOver ? 'ring-2 ring-brand-400 scale-[1.02]' : ''} cursor-grab active:cursor-grabbing`}
+      className={`border transition relative group ${micro?'rounded-md p-0.5':'rounded-xl '+(compact?'p-2':'p-3')} ${isHome?'bg-home-light/50 border-home/20':'bg-restaurant-light/50 border-restaurant/20'} ${isSelf ? 'opacity-40 scale-95' : ''} ${isDragOver ? 'ring-2 ring-brand-400 scale-[1.02]' : ''} cursor-grab active:cursor-grabbing`}
     >
-      <div className="flex items-start justify-between gap-1">
+      <div className="flex items-start justify-between gap-0.5">
         <div className="min-w-0 flex-1">
-          {!compact && <span className="text-xs font-medium uppercase text-gray-400 block mb-0.5">{slotFull}</span>}
-          <span className={`font-medium block truncate ${compact?'text-xs':'text-sm'}`}>{name}</span>
-          {!compact && item?.cuisine && <span className="text-xs text-gray-400">{item.cuisine}</span>}
-          {isHome && item?.description && !compact && (
+          {!compact && !micro && <span className="text-xs font-medium uppercase text-gray-400 block mb-0.5">{slotFull}</span>}
+          <span className={`font-medium block truncate ${micro?'text-[9px] leading-tight':compact?'text-xs':'text-sm'}`} title={name}>{micro ? `${slotLabel} ${name}` : name}</span>
+          {!compact && !micro && item?.cuisine && <span className="text-xs text-gray-400">{item.cuisine}</span>}
+          {isHome && item?.description && !compact && !micro && (
             <p className="text-xs text-gray-500 mt-1 line-clamp-2">{item.description}</p>
           )}
-          {isHome && mealUrlHref(item?.link) && (
+          {isHome && mealUrlHref(item?.link) && !micro && (
             <a href={mealUrlHref(item.link)} target="_blank" rel="noopener noreferrer" onClick={e=>e.stopPropagation()}
               className={`inline-flex items-center gap-0.5 mt-0.5 text-brand-600 hover:text-brand-700 ${compact?'text-[10px]':'text-xs'}`}>
               <Icon name="globe" size={compact?10:12} /> {!compact && 'Link'}
             </a>
           )}
         </div>
-        <button onClick={()=>onRemove(date,slotType)} className="p-1 rounded-md opacity-0 group-hover:opacity-100 hover:bg-red-50 text-red-400 transition flex-shrink-0" title="Remove">
-          <Icon name="x" size={14} />
+        <button onClick={()=>onRemove(date,slotType)} className={`rounded hover:bg-red-50 text-red-400 flex-shrink-0 ${micro?'p-0.5 opacity-80':'p-1 opacity-0 group-hover:opacity-100'} transition`} title="Remove">
+          <Icon name="x" size={micro?10:14} />
         </button>
       </div>
-      {withinWindow && (
+      {withinWindow && !micro && (
         <div className="flex items-center gap-1 mt-1.5 text-amber-600" title={`Last planned ${daysSince(lastPlanned)} days ago (window: ${rWin} days)`}>
           <Icon name="alert" size={12} />
           <span className="text-xs font-medium">Repeat</span>
         </div>
       )}
-      {slot.perPerson && Object.keys(slot.perPerson).length > 0 && (
+      {slot.perPerson && Object.keys(slot.perPerson).length > 0 && !micro && (
         <div className="mt-1.5 space-y-0.5">
           {Object.entries(slot.perPerson).map(([mid, mealId]) => {
             const member = state.household.members.find(m=>m.id===mid);
@@ -745,15 +805,72 @@ const SuggestModal = ({open, onClose, date, slotType, onSelect}) => {
   );
 };
 
+function DayDesignationTrigger({ date, onOpen, compact }) {
+  const { state } = useApp();
+  const label = state.dayDesignations?.[date] || '';
+  return (
+    <button type="button" onClick={(e)=>{ e.stopPropagation(); onOpen(date); }}
+      className={`w-full rounded-md transition focus:outline-none focus:ring-2 focus:ring-violet-300 ${label ? 'hover:bg-violet-50/80' : 'text-gray-400 hover:text-violet-700 hover:bg-gray-50'} ${compact ? 'py-0.5 px-0.5 -mx-0.5' : 'py-1'}`}
+      title={label ? 'Edit day designation' : 'Set day designation (birthday, vacation, …)'}>
+      {label ? (
+        <span className={`block max-w-full truncate rounded-full bg-violet-100 text-violet-900 font-medium ${compact ? 'text-[9px] px-1 py-px' : 'text-[10px] md:text-xs px-2 py-0.5'}`}>{label}</span>
+      ) : (
+        <span className={`${compact ? 'text-[8px]' : 'text-[10px] md:text-xs'} text-gray-400`}>+ Label</span>
+      )}
+    </button>
+  );
+}
+
+const DayDesignationModal = ({ date, onClose }) => {
+  const { state, dispatch } = useApp();
+  const current = state.dayDesignations?.[date] || '';
+  const [custom, setCustom] = useState(current);
+  useEffect(() => { setCustom(current); }, [date, current]);
+
+  const save = (label) => {
+    dispatch({ type: 'SET_DAY_DESIGNATION', payload: { date, label: label || '' } });
+    onClose();
+  };
+
+  const pretty = new Date(date + 'T12:00:00').toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric', year: 'numeric' });
+
+  return (
+    <Modal open={true} onClose={onClose} title="Day designation">
+      <p className="text-sm text-gray-600 mb-1">{pretty}</p>
+      <p className="text-xs text-gray-400 mb-4">Mark birthdays, trips, or other special days.</p>
+      <div className="flex flex-wrap gap-2 mb-4">
+        {DAY_DESIGNATION_PRESETS.map(p => (
+          <button key={p} type="button" onClick={() => save(p)}
+            className={`px-3 py-1.5 rounded-full text-sm font-medium border transition ${current === p ? 'bg-violet-600 text-white border-violet-600' : 'border-gray-200 bg-white text-gray-700 hover:border-violet-300'}`}>{p}</button>
+        ))}
+      </div>
+      <label className="text-sm font-medium text-gray-700 mb-1 block">Custom</label>
+      <input value={custom} onChange={e => setCustom(e.target.value)} maxLength={80} className="w-full px-4 py-2.5 border border-gray-200 rounded-xl text-sm focus:ring-2 focus:ring-brand-500 outline-none mb-4" placeholder="e.g. School play" />
+      <div className="flex flex-wrap justify-between gap-2 pt-2 border-t border-gray-100">
+        <button type="button" onClick={() => save('')} className="px-4 py-2 text-sm text-gray-600 hover:bg-gray-100 rounded-xl transition">Clear</button>
+        <div className="flex gap-2">
+          <button type="button" onClick={onClose} className="px-4 py-2 text-sm text-gray-600 hover:bg-gray-100 rounded-xl transition">Cancel</button>
+          <button type="button" onClick={() => save(custom)} className="px-5 py-2 bg-brand-500 text-white rounded-xl text-sm font-medium hover:bg-brand-600 transition">Save</button>
+        </div>
+      </div>
+    </Modal>
+  );
+};
+
 // ── WEEKLY CALENDAR ─────────────────────────────────────────────
 const WeeklyCalendar = () => {
-  const { state, dispatch } = useApp();
+  const { state } = useApp();
+  const [planView, setPlanView] = useState('week');
   const [weekOffset, setWeekOffset] = useState(0);
+  const [fourWeekOffset, setFourWeekOffset] = useState(0);
   const [addModal, setAddModal] = useState(null);
   const [suggestModal, setSuggestModal] = useState(null);
+  const [designationModal, setDesignationModal] = useState(null);
   const [mobileDay, setMobileDay] = useState(0);
 
   const dates = useMemo(() => getWeekDates(weekOffset), [weekOffset]);
+
+  const fourWeekGrid = useMemo(() => getFourWeekGrid(fourWeekOffset), [fourWeekOffset]);
 
   const [dragSource, setDragSource] = useState(null);
 
@@ -776,84 +893,159 @@ const WeeklyCalendar = () => {
   const todayStr = today();
   const isThisWeek = dates.includes(todayStr);
 
+  const subtitleWeek = `${monthName(dates[0])}${!isThisWeek ? ` · Week of ${new Date(dates[0]+'T12:00:00').toLocaleDateString('en-US',{month:'short',day:'numeric'})}` : ' · This Week'}`;
+  const subtitleFourWeek = fourWeekOffset === 0
+    ? `${fourWeekGrid.label} · Previous week, this week, +2 weeks ahead`
+    : fourWeekGrid.label;
+
   return (
     <div className="fade-in">
-      {/* Week navigation */}
-      <div className="flex items-center justify-between mb-6">
-        <div>
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between mb-6">
+        <div className="min-w-0">
           <h1 className="text-2xl font-bold text-gray-900">Meal Plan</h1>
-          <p className="text-sm text-gray-400 mt-0.5">{monthName(dates[0])} {!isThisWeek && `· Week of ${new Date(dates[0]+'T12:00:00').toLocaleDateString('en-US',{month:'short',day:'numeric'})}`}{isThisWeek && ' · This Week'}</p>
+          <p className="text-sm text-gray-400 mt-0.5">{planView === 'week' ? subtitleWeek : subtitleFourWeek}</p>
+          <div className="mt-3 inline-flex rounded-xl border border-gray-200 p-1 bg-gray-50/80" role="tablist" aria-label="Plan view">
+            <button type="button" role="tab" aria-selected={planView === 'week'} onClick={()=>setPlanView('week')}
+              className={`px-4 py-1.5 rounded-lg text-sm font-medium transition ${planView === 'week' ? 'bg-white shadow text-gray-900' : 'text-gray-500 hover:text-gray-700'}`}>
+              Week
+            </button>
+            <button type="button" role="tab" aria-selected={planView === 'fourweek'} onClick={()=>setPlanView('fourweek')}
+              className={`px-4 py-1.5 rounded-lg text-sm font-medium transition ${planView === 'fourweek' ? 'bg-white shadow text-gray-900' : 'text-gray-500 hover:text-gray-700'}`}>
+              4 weeks
+            </button>
+          </div>
         </div>
-        <div className="flex items-center gap-2">
-          <button onClick={()=>setWeekOffset(w=>w-1)} className="p-2 rounded-xl hover:bg-gray-100 text-gray-500 transition"><Icon name="chevLeft" /></button>
-          {weekOffset !== 0 && <button onClick={()=>setWeekOffset(0)} className="px-3 py-1.5 text-sm font-medium text-brand-600 hover:bg-brand-50 rounded-xl transition">Today</button>}
-          <button onClick={()=>setWeekOffset(w=>w+1)} className="p-2 rounded-xl hover:bg-gray-100 text-gray-500 transition"><Icon name="chevRight" /></button>
+        <div className="flex items-center gap-2 flex-shrink-0">
+          {planView === 'week' ? (
+            <>
+              <button type="button" onClick={()=>setWeekOffset(w=>w-1)} className="p-2 rounded-xl hover:bg-gray-100 text-gray-500 transition" aria-label="Previous week"><Icon name="chevLeft" /></button>
+              {weekOffset !== 0 && <button type="button" onClick={()=>setWeekOffset(0)} className="px-3 py-1.5 text-sm font-medium text-brand-600 hover:bg-brand-50 rounded-xl transition">Today</button>}
+              <button type="button" onClick={()=>setWeekOffset(w=>w+1)} className="p-2 rounded-xl hover:bg-gray-100 text-gray-500 transition" aria-label="Next week"><Icon name="chevRight" /></button>
+            </>
+          ) : (
+            <>
+              <button type="button" onClick={()=>setFourWeekOffset(o=>o-1)} className="p-2 rounded-xl hover:bg-gray-100 text-gray-500 transition" aria-label="Shift 4 weeks earlier"><Icon name="chevLeft" /></button>
+              {fourWeekOffset !== 0 && <button type="button" onClick={()=>setFourWeekOffset(0)} className="px-3 py-1.5 text-sm font-medium text-brand-600 hover:bg-brand-50 rounded-xl transition">Today</button>}
+              <button type="button" onClick={()=>setFourWeekOffset(o=>o+1)} className="p-2 rounded-xl hover:bg-gray-100 text-gray-500 transition" aria-label="Shift 4 weeks later"><Icon name="chevRight" /></button>
+            </>
+          )}
         </div>
       </div>
 
-      {/* Desktop: Full grid */}
-      <div className="hidden md:block">
-        <div className="grid grid-cols-7 gap-3">
-          {dates.map(d => {
-            const isToday = d === todayStr;
-            const plan = state.plans[d] || {};
-            return (
-              <div key={d} className={`rounded-2xl p-3 transition ${isToday ? 'bg-brand-50 ring-2 ring-brand-500/20' : 'bg-white'} border border-gray-100 shadow-sm`}>
-                <div className={`text-center mb-3 ${isToday?'':'text-gray-500'}`}>
-                  <div className="text-xs font-medium uppercase">{dayName(d)}</div>
-                  <div className={`text-lg font-bold ${isToday?'text-brand-600':''}`}>{dayNum(d)}</div>
-                </div>
-                <div className="space-y-2">
+      {planView === 'week' && (
+        <>
+          <div className="hidden md:block">
+            <div className="grid grid-cols-7 gap-3">
+              {dates.map(d => {
+                const isToday = d === todayStr;
+                const plan = state.plans[d] || {};
+                return (
+                  <div key={d} className={`rounded-2xl p-3 transition ${isToday ? 'bg-brand-50 ring-2 ring-brand-500/20' : 'bg-white'} border border-gray-100 shadow-sm`}>
+                    <div className={`text-center mb-2 ${isToday?'':'text-gray-500'}`}>
+                      <div className="text-xs font-medium uppercase">{dayName(d)}</div>
+                      <div className={`text-lg font-bold ${isToday?'text-brand-600':''}`}>{dayNum(d)}</div>
+                    </div>
+                    <div className="mb-2">
+                      <DayDesignationTrigger date={d} onOpen={setDesignationModal} />
+                    </div>
+                    <div className="space-y-2">
+                      {['breakfast','lunch','dinner'].map(s => (
+                        <MealSlot key={s} date={d} slotType={s} plan={plan} compact
+                          onAdd={(date,slot)=>setAddModal({date,slot})}
+                          onRemove={handleRemove}
+                          onSuggest={(date,slot)=>setSuggestModal({date,slot})}
+                          {...slotProps} />
+                      ))}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+
+          <div className="md:hidden">
+            <div className="flex gap-1 mb-4 overflow-x-auto pb-1">
+              {dates.map((d,i) => {
+                const isToday = d === todayStr;
+                return (
+                  <button key={d} type="button" onClick={()=>setMobileDay(i)}
+                    className={`flex-shrink-0 w-12 py-2 rounded-xl text-center transition ${mobileDay===i?(isToday?'bg-brand-500 text-white':'bg-gray-900 text-white'):(isToday?'bg-brand-50 text-brand-600':'bg-white text-gray-500 border border-gray-100')}`}>
+                    <div className="text-xs font-medium">{dayName(d)}</div>
+                    <div className="text-lg font-bold">{dayNum(d)}</div>
+                  </button>
+                );
+              })}
+            </div>
+            {(() => {
+              const d = dates[mobileDay];
+              const plan = state.plans[d] || {};
+              return (
+                <div className="space-y-3 fade-in">
+                  <div className="px-0.5">
+                    <DayDesignationTrigger date={d} onOpen={setDesignationModal} />
+                  </div>
                   {['breakfast','lunch','dinner'].map(s => (
-                    <MealSlot key={s} date={d} slotType={s} plan={plan} compact
+                    <MealSlot key={s} date={d} slotType={s} plan={plan}
                       onAdd={(date,slot)=>setAddModal({date,slot})}
                       onRemove={handleRemove}
                       onSuggest={(date,slot)=>setSuggestModal({date,slot})}
                       {...slotProps} />
                   ))}
                 </div>
-              </div>
-            );
-          })}
-        </div>
-      </div>
+              );
+            })()}
+          </div>
+        </>
+      )}
 
-      {/* Mobile: Single day view */}
-      <div className="md:hidden">
-        {/* Day selector */}
-        <div className="flex gap-1 mb-4 overflow-x-auto pb-1">
-          {dates.map((d,i) => {
-            const isToday = d === todayStr;
-            return (
-              <button key={d} onClick={()=>setMobileDay(i)}
-                className={`flex-shrink-0 w-12 py-2 rounded-xl text-center transition ${mobileDay===i?(isToday?'bg-brand-500 text-white':'bg-gray-900 text-white'):(isToday?'bg-brand-50 text-brand-600':'bg-white text-gray-500 border border-gray-100')}`}>
-                <div className="text-xs font-medium">{dayName(d)}</div>
-                <div className="text-lg font-bold">{dayNum(d)}</div>
-              </button>
-            );
-          })}
-        </div>
-        {/* Day plan */}
-        {(() => {
-          const d = dates[mobileDay];
-          const plan = state.plans[d] || {};
-          return (
-            <div className="space-y-3 fade-in">
-              {['breakfast','lunch','dinner'].map(s => (
-                <MealSlot key={s} date={d} slotType={s} plan={plan}
-                  onAdd={(date,slot)=>setAddModal({date,slot})}
-                  onRemove={handleRemove}
-                  onSuggest={(date,slot)=>setSuggestModal({date,slot})}
-                  {...slotProps} />
+      {planView === 'fourweek' && (
+        <div className="overflow-x-auto -mx-1 px-1">
+          <div className="min-w-[320px] md:min-w-0">
+            <div className="grid grid-cols-7 gap-0.5 md:gap-2 mb-1 md:mb-2">
+              {WEEKDAY_LABELS_MON.map(wd => (
+                <div key={wd} className="text-center text-[10px] md:text-xs font-semibold text-gray-400 uppercase tracking-wide py-1">{wd}</div>
               ))}
             </div>
-          );
-        })()}
-      </div>
+            {fourWeekGrid.weeks.map((row, wi) => (
+              <div key={wi} className={`rounded-xl p-0.5 md:p-1 mb-1.5 md:mb-2 last:mb-0 ${wi === 1 && fourWeekOffset === 0 ? 'ring-1 ring-brand-200/70 bg-brand-50/25' : ''}`}>
+                <div className="grid grid-cols-7 gap-0.5 md:gap-2">
+                  {row.map((d) => {
+                    const isToday = d === todayStr;
+                    const plan = state.plans[d] || {};
+                    return (
+                      <div key={d} className={`rounded-lg md:rounded-2xl border p-1 md:p-2 flex flex-col min-h-[88px] md:min-h-[148px] ${isToday ? 'bg-brand-50/80 ring-1 md:ring-2 ring-brand-500/25 border-brand-200' : 'bg-white border-gray-100 shadow-sm'}`}>
+                        <div className={`text-center mb-0.5 md:mb-1.5 flex-shrink-0 ${isToday ? 'text-brand-700' : 'text-gray-500'}`}>
+                          <div className="text-[9px] md:text-xs font-medium uppercase leading-none">{dayName(d)}</div>
+                          <div className={`text-xs md:text-lg font-bold leading-tight ${isToday ? 'text-brand-600' : ''}`}>{dayNum(d)}</div>
+                        </div>
+                        <div className="mb-0.5 flex-shrink-0 min-h-0">
+                          <DayDesignationTrigger date={d} onOpen={setDesignationModal} compact />
+                        </div>
+                        <div className="space-y-0.5 flex-1 min-h-0 flex flex-col justify-start">
+                          {['breakfast','lunch','dinner'].map(s => (
+                            <MealSlot key={s} date={d} slotType={s} plan={plan} compact micro
+                              onAdd={(date,slot)=>setAddModal({date,slot})}
+                              onRemove={handleRemove}
+                              onSuggest={(date,slot)=>setSuggestModal({date,slot})}
+                              {...slotProps} />
+                          ))}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            ))}
+          </div>
+          {fourWeekOffset !== 0 && (
+            <p className="text-center text-xs text-gray-400 mt-3">Viewing another date range — tap Today to return.</p>
+          )}
+        </div>
+      )}
 
-      {/* Modals */}
       {addModal && <AddMealModal open={!!addModal} onClose={()=>setAddModal(null)} date={addModal.date} slotType={addModal.slot} onSelect={handleSelect} />}
       {suggestModal && <SuggestModal open={!!suggestModal} onClose={()=>setSuggestModal(null)} date={suggestModal.date} slotType={suggestModal.slot} onSelect={handleSelect} />}
+      {designationModal && <DayDesignationModal key={designationModal} date={designationModal} onClose={()=>setDesignationModal(null)} />}
     </div>
   );
 };
@@ -1586,6 +1778,14 @@ function appReducer(state, action) {
       plans[from.date] = { ...plans[from.date], [from.slot]: toData };
       plans[to.date]   = { ...plans[to.date],   [to.slot]:   fromData };
       return { ...state, plans };
+    }
+    case 'SET_DAY_DESIGNATION': {
+      const { date, label } = action.payload;
+      const next = { ...(state.dayDesignations || {}) };
+      const t = typeof label === 'string' ? label.trim().slice(0, 80) : '';
+      if (!t) delete next[date];
+      else next[date] = t;
+      return { ...state, dayDesignations: next };
     }
     case 'UPDATE_HOUSEHOLD': return {...state, household: {...state.household, ...action.payload}};
     case 'UPDATE_MEMBER': {
