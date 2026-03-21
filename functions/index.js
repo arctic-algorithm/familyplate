@@ -75,27 +75,54 @@ function getYesterdayInTZ(timezone) {
   }
 }
 
-/** Look up a meal name by ID */
-function getMealName(meals, mealId) {
-  if (!meals || !mealId) return null;
-  const meal = meals.find((m) => m.id === mealId);
-  return meal ? meal.name : null;
+function escapeHtml(s) {
+  return String(s)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
 }
 
-/** Look up a restaurant name by ID */
-function getRestaurantName(restaurants, mealId) {
-  if (!restaurants || !mealId) return null;
-  const r = restaurants.find((x) => x.id === mealId);
-  return r ? r.name : null;
+function sanitizeUrlForEmail(url) {
+  const t = String(url).trim();
+  if (!t) return null;
+  try {
+    const u = new URL(/^https?:\/\//i.test(t) ? t : `https://${t}`);
+    if (u.protocol === "http:" || u.protocol === "https:") return u.href;
+  } catch {
+    /* ignore */
+  }
+  return null;
 }
 
-/** Get display name for a slot */
-function getSlotDisplay(slot, meals, restaurants) {
+/**
+ * Rich slot line for email: title (escaped), optional description & link for home meals.
+ * @returns {{ title: string, description: string | null, linkHref: string | null } | null}
+ */
+function getSlotEmailInfo(slot, meals, restaurants) {
   if (!slot || slot.type === "empty") return null;
-  if (slot.type === "home") return getMealName(meals, slot.mealId);
+  if (slot.type === "home") {
+    const meal = meals.find((m) => m.id === slot.mealId);
+    if (!meal) return null;
+    const title = escapeHtml(meal.name);
+    const description =
+      typeof meal.description === "string" && meal.description.trim()
+        ? escapeHtml(meal.description.trim())
+        : null;
+    const linkHref =
+      typeof meal.link === "string" && meal.link.trim()
+        ? sanitizeUrlForEmail(meal.link.trim())
+        : null;
+    return { title, description, linkHref };
+  }
   if (slot.type === "restaurant") {
-    const name = getRestaurantName(restaurants, slot.mealId);
-    return name ? `${name} (eating out)` : null;
+    const r = restaurants.find((x) => x.id === slot.mealId);
+    if (!r) return null;
+    return {
+      title: escapeHtml(`${r.name} (eating out)`),
+      description: null,
+      linkHref: null,
+    };
   }
   return null;
 }
@@ -117,7 +144,7 @@ function buildEmailHTML({
   householdName,
   todayDate,
   todayFormatted,
-  slots, // { breakfast: name|null, lunch: name|null, dinner: name|null }
+  slots, // { breakfast: { title, description?, linkHref? }|null, ... }
   planned,
   missing,
   confirmToken,
@@ -131,12 +158,18 @@ function buildEmailHTML({
 
   const slotRows = ["breakfast", "lunch", "dinner"]
     .map((slot) => {
-      const name = slots[slot];
-      const filled = !!name;
+      const info = slots[slot];
+      const filled = !!(info && info.title);
       const icon = slot === "breakfast" ? "🌅" : slot === "lunch" ? "☀️" : "🌙";
       const label = slot.charAt(0).toUpperCase() + slot.slice(1);
 
       if (filled) {
+        const descBlock = info.description
+          ? `<div style="margin-top:4px;font-size:12px;color:#64748b;line-height:1.4;max-width:280px;margin-left:auto;text-align:right;">${info.description}</div>`
+          : "";
+        const linkBlock = info.linkHref
+          ? `<div style="margin-top:6px;text-align:right;"><a href="${info.linkHref}" style="color:#f97316;font-size:12px;font-weight:600;text-decoration:none;">Open link →</a></div>`
+          : "";
         return `
         <tr>
           <td style="padding:12px 16px;border-bottom:1px solid #f1f5f9;">
@@ -144,7 +177,9 @@ function buildEmailHTML({
             <span style="margin-left:8px;color:#64748b;font-size:13px;font-weight:500;">${label}</span>
           </td>
           <td style="padding:12px 16px;border-bottom:1px solid #f1f5f9;text-align:right;">
-            <span style="color:#1e293b;font-weight:600;font-size:14px;">${name}</span>
+            <span style="color:#1e293b;font-weight:600;font-size:14px;">${info.title}</span>
+            ${descBlock}
+            ${linkBlock}
           </td>
         </tr>`;
       } else {
@@ -283,9 +318,9 @@ async function sendEmailsForHousehold(resendKey) {
 
   // Build slot data
   const slots = {
-    breakfast: getSlotDisplay(dayPlan.breakfast, meals, restaurants),
-    lunch: getSlotDisplay(dayPlan.lunch, meals, restaurants),
-    dinner: getSlotDisplay(dayPlan.dinner, meals, restaurants),
+    breakfast: getSlotEmailInfo(dayPlan.breakfast, meals, restaurants),
+    lunch: getSlotEmailInfo(dayPlan.lunch, meals, restaurants),
+    dinner: getSlotEmailInfo(dayPlan.dinner, meals, restaurants),
   };
 
   const planned = Object.values(slots).filter(Boolean).length;

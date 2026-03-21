@@ -140,6 +140,18 @@ function daysSince(dateStr) {
   return Math.floor((t - d) / 86400000);
 }
 
+/** Accepts recipe URLs; returns safe http(s) href or null */
+function mealUrlHref(raw) {
+  if (!raw || typeof raw !== 'string') return null;
+  const t = raw.trim();
+  if (!t) return null;
+  try {
+    const u = new URL(/^https?:\/\//i.test(t) ? t : `https://${t}`);
+    if (u.protocol === 'http:' || u.protocol === 'https:') return u.href;
+  } catch (e) {}
+  return null;
+}
+
 const CUISINES = ['Italian','Mexican','Chinese','Japanese','Indian','Thai','American','Mediterranean','Korean','French','Vietnamese','Greek','Middle Eastern','Ethiopian','Other'];
 const TAGS = ['Quick (<30min)','Family-Friendly','Toddler-Safe','Vegetarian','Vegan','Gluten-Free','Dairy-Free','Nut-Free','Spicy','Comfort Food','Healthy','Meal Prep','One-Pot','Grilling','Baking'];
 const COMMON_MEALS = [
@@ -218,6 +230,8 @@ function normalizeFirebaseData(data) {
     ...m,
     tags: toArray(m.tags),
     history: toArray(m.history),
+    link: typeof m.link === 'string' ? m.link : '',
+    description: typeof m.description === 'string' ? m.description : '',
   }));
 
   // Normalise household members & their nested preference arrays
@@ -399,7 +413,7 @@ const Onboarding = () => {
 
   const finish = () => {
     const newMeals = COMMON_MEALS.filter((_,i) => selectedMeals.has(i)).map(m => ({
-      id: uid(), ...m, toddlerSafe: m.tags.includes('Toddler-Safe'), adultOnly: m.tags.includes('Spicy'),
+      id: uid(), ...m, link: '', description: '', toddlerSafe: m.tags.includes('Toddler-Safe'), adultOnly: m.tags.includes('Spicy'),
       history: [], createdAt: today()
     }));
     dispatch({type:'SETUP', payload:{
@@ -520,6 +534,15 @@ const MealSlot = ({date, slotType, plan, onAdd, onRemove, onSuggest, compact, dr
           {!compact && <span className="text-xs font-medium uppercase text-gray-400 block mb-0.5">{slotFull}</span>}
           <span className={`font-medium block truncate ${compact?'text-xs':'text-sm'}`}>{name}</span>
           {!compact && item?.cuisine && <span className="text-xs text-gray-400">{item.cuisine}</span>}
+          {isHome && item?.description && !compact && (
+            <p className="text-xs text-gray-500 mt-1 line-clamp-2">{item.description}</p>
+          )}
+          {isHome && mealUrlHref(item?.link) && (
+            <a href={mealUrlHref(item.link)} target="_blank" rel="noopener noreferrer" onClick={e=>e.stopPropagation()}
+              className={`inline-flex items-center gap-0.5 mt-0.5 text-brand-600 hover:text-brand-700 ${compact?'text-[10px]':'text-xs'}`}>
+              <Icon name="globe" size={compact?10:12} /> {!compact && 'Link'}
+            </a>
+          )}
         </div>
         <button onClick={()=>onRemove(date,slotType)} className="p-1 rounded-md opacity-0 group-hover:opacity-100 hover:bg-red-50 text-red-400 transition flex-shrink-0" title="Remove">
           <Icon name="x" size={14} />
@@ -566,7 +589,12 @@ const AddMealModal = ({open, onClose, date, slotType, onSelect}) => {
   const [quickName, setQuickName] = useState('');
 
   const filteredMeals = useMemo(() => {
-    return state.meals.filter(m => m.name.toLowerCase().includes(search.toLowerCase()) || m.cuisine.toLowerCase().includes(search.toLowerCase()));
+    const q = search.toLowerCase();
+    return state.meals.filter(m => {
+      if (m.name.toLowerCase().includes(q) || m.cuisine.toLowerCase().includes(q)) return true;
+      const desc = (m.description || '').toLowerCase();
+      return desc && desc.includes(q);
+    });
   }, [state.meals, search]);
 
   const dateDayName = dayName(date);
@@ -580,7 +608,7 @@ const AddMealModal = ({open, onClose, date, slotType, onSelect}) => {
 
   const quickAdd = () => {
     if (!quickName.trim()) return;
-    const meal = { id: uid(), name: quickName.trim(), cuisine: 'Other', prepTime: 30, tags: [], toddlerSafe: false, adultOnly: false, history: [], createdAt: today() };
+    const meal = { id: uid(), name: quickName.trim(), cuisine: 'Other', prepTime: 30, tags: [], toddlerSafe: false, adultOnly: false, link: '', description: '', history: [], createdAt: today() };
     dispatch({type:'ADD_MEAL', payload: meal});
     onSelect(date, slotType, 'home', meal.id);
     setQuickName('');
@@ -626,6 +654,7 @@ const AddMealModal = ({open, onClose, date, slotType, onSelect}) => {
               <div className="flex-1 min-w-0">
                 <div className="font-medium text-sm truncate">{m.name}</div>
                 <div className="text-xs text-gray-400">{m.cuisine} {m.prepTime?`· ${m.prepTime}min`:''} {m.tags.length?`· ${m.tags.slice(0,2).join(', ')}`:''}</div>
+                {m.description && <div className="text-xs text-gray-500 mt-0.5 line-clamp-2">{m.description}</div>}
               </div>
               {withinWindow && <span className="text-xs px-2 py-1 rounded-full bg-amber-50 text-amber-600 font-medium flex-shrink-0">{blocked?'Blocked':'Repeat'}</span>}
             </button>
@@ -839,8 +868,13 @@ const MealLibrary = () => {
   const [editMeal, setEditMeal] = useState(null);
 
   const filtered = useMemo(() => {
+    const q = search.toLowerCase();
     return state.meals.filter(m => {
-      if (search && !m.name.toLowerCase().includes(search.toLowerCase())) return false;
+      if (search) {
+        const inName = m.name.toLowerCase().includes(q);
+        const inDesc = (m.description || '').toLowerCase().includes(q);
+        if (!inName && !inDesc) return false;
+      }
       if (filterCuisine && m.cuisine !== filterCuisine) return false;
       if (filterTag && !m.tags.includes(filterTag)) return false;
       return true;
@@ -896,6 +930,15 @@ const MealLibrary = () => {
                   <button onClick={()=>dispatch({type:'DELETE_MEAL',payload:m.id})} className="p-1.5 rounded-lg hover:bg-red-50 text-red-400"><Icon name="trash" size={14} /></button>
                 </div>
               </div>
+              {m.description && (
+                <p className="text-sm text-gray-600 line-clamp-2 mb-2">{m.description}</p>
+              )}
+              {mealUrlHref(m.link) && (
+                <a href={mealUrlHref(m.link)} target="_blank" rel="noopener noreferrer" onClick={e=>e.stopPropagation()}
+                  className="inline-flex items-center gap-1 text-xs font-medium text-brand-600 hover:text-brand-700 mb-2">
+                  <Icon name="globe" size={12} /> Link
+                </a>
+              )}
               {m.tags.length > 0 && (
                 <div className="flex flex-wrap gap-1 mb-2">
                   {m.tags.slice(0,3).map(t => <span key={t} className="text-xs px-2 py-0.5 rounded-full bg-gray-100 text-gray-500">{t}</span>)}
@@ -917,7 +960,7 @@ const MealLibrary = () => {
       </div>
       {filtered.length === 0 && <p className="text-center text-gray-400 py-12">No meals match your filters.</p>}
 
-      {showAdd && <MealForm open={showAdd} onClose={()=>{setShowAdd(false);setEditMeal(null)}} meal={editMeal} />}
+      {showAdd && <MealForm key={editMeal?.id || 'new'} open={showAdd} onClose={()=>{setShowAdd(false);setEditMeal(null)}} meal={editMeal} />}
     </div>
   );
 };
@@ -931,10 +974,12 @@ const MealForm = ({open, onClose, meal}) => {
   const [tags, setTags] = useState(new Set(meal?.tags || []));
   const [toddlerSafe, setToddlerSafe] = useState(meal?.toddlerSafe || false);
   const [adultOnly, setAdultOnly] = useState(meal?.adultOnly || false);
+  const [link, setLink] = useState(meal?.link || '');
+  const [description, setDescription] = useState(meal?.description || '');
 
   const save = () => {
     if (!name.trim()) return;
-    const data = { name: name.trim(), cuisine, prepTime, tags: [...tags], toddlerSafe, adultOnly };
+    const data = { name: name.trim(), cuisine, prepTime, tags: [...tags], toddlerSafe, adultOnly, link: link.trim(), description: description.trim() };
     if (meal) {
       dispatch({type:'UPDATE_MEAL', payload:{id: meal.id, ...data}});
     } else {
@@ -963,6 +1008,14 @@ const MealForm = ({open, onClose, meal}) => {
             <label className="text-sm font-medium text-gray-700 mb-1 block">Prep Time (min)</label>
             <input type="number" value={prepTime} onChange={e=>setPrepTime(+e.target.value)} className="w-full px-3 py-2.5 border border-gray-200 rounded-xl text-sm focus:ring-2 focus:ring-brand-500 outline-none" />
           </div>
+        </div>
+        <div>
+          <label className="text-sm font-medium text-gray-700 mb-1 block">Link <span className="text-gray-400 font-normal">(optional)</span></label>
+          <input type="url" value={link} onChange={e=>setLink(e.target.value)} className="w-full px-4 py-2.5 border border-gray-200 rounded-xl text-sm focus:ring-2 focus:ring-brand-500 outline-none" placeholder="https://… recipe or notes" />
+        </div>
+        <div>
+          <label className="text-sm font-medium text-gray-700 mb-1 block">Description <span className="text-gray-400 font-normal">(optional)</span></label>
+          <textarea value={description} onChange={e=>setDescription(e.target.value)} rows={3} className="w-full px-4 py-2.5 border border-gray-200 rounded-xl text-sm focus:ring-2 focus:ring-brand-500 outline-none resize-y min-h-[72px]" placeholder="Notes, ingredients to buy, etc." />
         </div>
         <div>
           <label className="text-sm font-medium text-gray-700 mb-1 block">Tags</label>
