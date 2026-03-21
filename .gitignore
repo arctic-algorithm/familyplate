@@ -1,0 +1,15 @@
+# Dependencies
+node_modules/
+
+# Firebase / local logs
+firebase-debug.log
+firebase-debug.*.log
+.firebase/
+
+# Cloud Functions env (secrets + machine-specific config)
+functions/.env
+functions/.env.*
+!functions/.env.example
+
+# Vercel
+.vercel/
