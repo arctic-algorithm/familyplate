@@ -189,6 +189,28 @@ function mealUrlHref(raw) {
 
 const CUISINES = ['Italian','Mexican','Chinese','Japanese','Indian','Thai','American','Mediterranean','Korean','French','Vietnamese','Greek','Middle Eastern','Ethiopian','Other'];
 const TAGS = ['Quick (<30min)','Family-Friendly','Toddler-Safe','Vegetarian','Vegan','Gluten-Free','Dairy-Free','Nut-Free','Spicy','Comfort Food','Healthy','Meal Prep','One-Pot','Grilling','Baking'];
+
+const MEAL_SLOT_TYPES = ['breakfast', 'lunch', 'dinner'];
+const MEAL_SLOT_SHORT = { breakfast: 'B', lunch: 'L', dinner: 'D' };
+
+/** No `slots` or empty means the meal can be planned in any slot (existing data). */
+function mealAppliesToSlot(meal, slotType) {
+  const slots = meal?.slots;
+  if (!slots || !Array.isArray(slots) || slots.length === 0) return true;
+  return slots.includes(slotType);
+}
+
+/** Sort key 0–2 = earliest tagged slot in day order; 3 = any mealtime (untagged or all slots). */
+function mealLibraryMealtimeOrder(m) {
+  const s = m?.slots;
+  if (!s || !Array.isArray(s) || s.length === 0 || s.length === MEAL_SLOT_TYPES.length) return 3;
+  let best = 3;
+  for (const slot of s) {
+    const i = MEAL_SLOT_TYPES.indexOf(slot);
+    if (i >= 0 && i < best) best = i;
+  }
+  return best;
+}
 const DAY_DESIGNATION_PRESETS = ['Birthday', 'Vacation', 'Holiday', 'Travel', 'Guests', 'Sick day', 'Party'];
 const COMMON_MEALS = [
   {name:'Spaghetti Bolognese',cuisine:'Italian',prepTime:40,tags:['Family-Friendly','Comfort Food']},
@@ -261,14 +283,24 @@ function normalizeFirebaseData(data) {
   const meals = toArray(data.meals);
   const restaurants = toArray(data.restaurants);
 
-  // Normalise each meal's tags and history arrays
-  const normMeals = meals.map(m => ({
-    ...m,
-    tags: toArray(m.tags),
-    history: toArray(m.history),
-    link: typeof m.link === 'string' ? m.link : '',
-    description: typeof m.description === 'string' ? m.description : '',
-  }));
+  // Normalise each meal's tags, history, and plan slots (breakfast / lunch / dinner)
+  const normMeals = meals.map(m => {
+    const slotRaw = toArray(m.slots);
+    const allowed = new Set(MEAL_SLOT_TYPES);
+    const cleaned = [...new Set(slotRaw.filter(s => typeof s === 'string' && allowed.has(s)))];
+    const slotsNorm =
+      cleaned.length === 0 || cleaned.length === MEAL_SLOT_TYPES.length ? null : cleaned;
+    const out = {
+      ...m,
+      tags: toArray(m.tags),
+      history: toArray(m.history),
+      link: typeof m.link === 'string' ? m.link : '',
+      description: typeof m.description === 'string' ? m.description : '',
+    };
+    if (slotsNorm) out.slots = slotsNorm;
+    else delete out.slots;
+    return out;
+  });
 
   // Normalise household members & their nested preference arrays
   let household = data.household || DEFAULT_HOUSEHOLD;
@@ -648,14 +680,19 @@ const AddMealModal = ({open, onClose, date, slotType, onSelect}) => {
   const [search, setSearch] = useState('');
   const [quickName, setQuickName] = useState('');
 
+  const mealsForSlot = useMemo(
+    () => state.meals.filter(m => mealAppliesToSlot(m, slotType)),
+    [state.meals, slotType]
+  );
+
   const filteredMeals = useMemo(() => {
     const q = search.toLowerCase();
-    return state.meals.filter(m => {
+    return mealsForSlot.filter(m => {
       if (m.name.toLowerCase().includes(q) || m.cuisine.toLowerCase().includes(q)) return true;
       const desc = (m.description || '').toLowerCase();
       return desc && desc.includes(q);
     });
-  }, [state.meals, search]);
+  }, [mealsForSlot, search]);
 
   const dateDayName = dayName(date);
   const filteredRestaurants = useMemo(() => {
@@ -668,7 +705,7 @@ const AddMealModal = ({open, onClose, date, slotType, onSelect}) => {
 
   const quickAdd = () => {
     if (!quickName.trim()) return;
-    const meal = { id: uid(), name: quickName.trim(), cuisine: 'Other', prepTime: 30, tags: [], toddlerSafe: false, adultOnly: false, link: '', description: '', history: [], createdAt: today() };
+    const meal = { id: uid(), name: quickName.trim(), cuisine: 'Other', prepTime: 30, tags: [], toddlerSafe: false, adultOnly: false, link: '', description: '', history: [], createdAt: today(), slots: [slotType] };
     dispatch({type:'ADD_MEAL', payload: meal});
     onSelect(date, slotType, 'home', meal.id);
     setQuickName('');
@@ -690,7 +727,7 @@ const AddMealModal = ({open, onClose, date, slotType, onSelect}) => {
 
       {/* Tabs */}
       <div className="flex gap-1 mb-4 bg-gray-100 rounded-xl p-1">
-        <button onClick={()=>setTab('home')} className={`flex-1 py-2 rounded-lg text-sm font-medium transition ${tab==='home'?'bg-white shadow text-home':'text-gray-500 hover:text-gray-700'}`}>Home Meals ({state.meals.length})</button>
+        <button onClick={()=>setTab('home')} className={`flex-1 py-2 rounded-lg text-sm font-medium transition ${tab==='home'?'bg-white shadow text-home':'text-gray-500 hover:text-gray-700'}`}>Home Meals ({mealsForSlot.length})</button>
         <button onClick={()=>setTab('restaurant')} className={`flex-1 py-2 rounded-lg text-sm font-medium transition ${tab==='restaurant'?'bg-white shadow text-restaurant':'text-gray-500 hover:text-gray-700'}`}>Restaurants ({state.restaurants.length})</button>
       </div>
 
@@ -731,7 +768,13 @@ const AddMealModal = ({open, onClose, date, slotType, onSelect}) => {
             {r.isFavorite && <span className="text-red-400"><Icon name="heartFill" size={14} /></span>}
           </button>
         ))}
-        {tab === 'home' && filteredMeals.length === 0 && <p className="text-sm text-gray-400 text-center py-8">No meals found. Add one with quick-add above!</p>}
+        {tab === 'home' && filteredMeals.length === 0 && (
+          <p className="text-sm text-gray-400 text-center py-8">
+            {mealsForSlot.length === 0 && state.meals.length > 0
+              ? `No meals are set for ${slotFull.toLowerCase()} yet. Tag meals in the library, or quick-add above — it will be saved for this mealtime only.`
+              : 'No meals found. Add one with quick-add above!'}
+          </p>
+        )}
         {tab === 'restaurant' && filteredRestaurants.length === 0 && (
           <p className="text-sm text-gray-400 text-center py-8">
             {state.restaurants.length === 0
@@ -748,6 +791,7 @@ const AddMealModal = ({open, onClose, date, slotType, onSelect}) => {
 const SuggestModal = ({open, onClose, date, slotType, onSelect}) => {
   const { state } = useApp();
   const [suggestions, setSuggestions] = useState([]);
+  const slotFull = slotType === 'breakfast' ? 'Breakfast' : slotType === 'lunch' ? 'Lunch' : 'Dinner';
 
   const generateSuggestions = useCallback(() => {
     const rWin = state.household.repetitionWindow;
@@ -765,6 +809,7 @@ const SuggestModal = ({open, onClose, date, slotType, onSelect}) => {
     });
 
     const eligible = state.meals.filter(m => {
+      if (!mealAppliesToSlot(m, slotType)) return false;
       const last = getLastPlanned(state.plans, m.id, date);
       return !last || daysSince(last) >= rWin;
     });
@@ -776,13 +821,13 @@ const SuggestModal = ({open, onClose, date, slotType, onSelect}) => {
     }));
     scored.sort((a,b) => b.score - a.score);
     setSuggestions(scored.slice(0, 3));
-  }, [state, date]);
+  }, [state, date, slotType]);
 
   useEffect(() => { if (open) generateSuggestions(); }, [open, generateSuggestions]);
 
   return (
-    <Modal open={open} onClose={onClose} title="Meal Suggestions">
-      <p className="text-sm text-gray-500 mb-4">Based on your library, avoiding recent repeats and balancing variety:</p>
+    <Modal open={open} onClose={onClose} title={`${slotFull} suggestions`}>
+      <p className="text-sm text-gray-500 mb-4">From meals tagged for {slotFull.toLowerCase()}, avoiding recent repeats and balancing variety:</p>
       <div className="space-y-3">
         {suggestions.map((m, i) => (
           <button key={m.id} onClick={()=>{onSelect(date,slotType,'home',m.id);onClose();}}
@@ -796,7 +841,13 @@ const SuggestModal = ({open, onClose, date, slotType, onSelect}) => {
             </div>
           </button>
         ))}
-        {suggestions.length === 0 && <p className="text-sm text-gray-400 text-center py-6">No eligible meals found. Add more meals to your library!</p>}
+        {suggestions.length === 0 && (
+          <p className="text-sm text-gray-400 text-center py-6">
+            {state.meals.some(m => mealAppliesToSlot(m, slotType))
+              ? 'No eligible meals right now (repetition window or variety). Try shuffle or pick from the list.'
+              : 'No meals in your library for this slot. Add meals and tag them for this mealtime, or use quick-add when planning.'}
+          </p>
+        )}
       </div>
       <button onClick={generateSuggestions} className="mt-4 flex items-center gap-2 mx-auto px-4 py-2 text-sm text-brand-600 hover:bg-brand-50 rounded-xl transition">
         <Icon name="shuffle" size={16} /> Shuffle suggestions
@@ -1056,12 +1107,14 @@ const MealLibrary = () => {
   const [search, setSearch] = useState('');
   const [filterCuisine, setFilterCuisine] = useState('');
   const [filterTag, setFilterTag] = useState('');
+  const [filterMealSlot, setFilterMealSlot] = useState('');
+  const [sortBy, setSortBy] = useState('name');
   const [showAdd, setShowAdd] = useState(false);
   const [editMeal, setEditMeal] = useState(null);
 
   const filtered = useMemo(() => {
     const q = search.toLowerCase();
-    return state.meals.filter(m => {
+    const list = state.meals.filter(m => {
       if (search) {
         const inName = m.name.toLowerCase().includes(q);
         const inDesc = (m.description || '').toLowerCase().includes(q);
@@ -1069,9 +1122,21 @@ const MealLibrary = () => {
       }
       if (filterCuisine && m.cuisine !== filterCuisine) return false;
       if (filterTag && !m.tags.includes(filterTag)) return false;
+      if (filterMealSlot && !mealAppliesToSlot(m, filterMealSlot)) return false;
       return true;
     });
-  }, [state.meals, search, filterCuisine, filterTag]);
+    if (sortBy === 'mealtime') {
+      list.sort((a, b) => {
+        const oa = mealLibraryMealtimeOrder(a);
+        const ob = mealLibraryMealtimeOrder(b);
+        if (oa !== ob) return oa - ob;
+        return a.name.localeCompare(b.name, undefined, { sensitivity: 'base' });
+      });
+    } else {
+      list.sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }));
+    }
+    return list;
+  }, [state.meals, search, filterCuisine, filterTag, filterMealSlot, sortBy]);
 
   const cuisinesUsed = [...new Set(state.meals.map(m=>m.cuisine))].sort();
   const tagsUsed = [...new Set(state.meals.flatMap(m=>m.tags))].sort();
@@ -1102,6 +1167,16 @@ const MealLibrary = () => {
           <option value="">All Tags</option>
           {tagsUsed.map(t => <option key={t}>{t}</option>)}
         </select>
+        <select value={filterMealSlot} onChange={e=>setFilterMealSlot(e.target.value)} className="px-3 py-2 border border-gray-200 rounded-xl text-sm bg-white focus:ring-2 focus:ring-brand-500 outline-none" title="Filter by meal time">
+          <option value="">All meal times</option>
+          {MEAL_SLOT_TYPES.map(s => (
+            <option key={s} value={s}>{s.charAt(0).toUpperCase() + s.slice(1)}</option>
+          ))}
+        </select>
+        <select value={sortBy} onChange={e=>setSortBy(e.target.value)} className="px-3 py-2 border border-gray-200 rounded-xl text-sm bg-white focus:ring-2 focus:ring-brand-500 outline-none" title="Sort order">
+          <option value="name">Sort: Name</option>
+          <option value="mealtime">Sort: Meal time</option>
+        </select>
       </div>
 
       {/* Meal Grid */}
@@ -1116,6 +1191,11 @@ const MealLibrary = () => {
                 <div className="flex-1 min-w-0">
                   <h3 className="font-semibold text-gray-900 truncate">{m.name}</h3>
                   <p className="text-sm text-gray-400">{m.cuisine} {m.prepTime?`· ${m.prepTime}min`:''}</p>
+                  <p className="text-[11px] text-gray-400 mt-0.5">
+                    {(!m.slots || m.slots.length === 0 || m.slots.length === MEAL_SLOT_TYPES.length)
+                      ? <span className="text-gray-400">Any mealtime</span>
+                      : <span className="font-medium text-gray-500">{m.slots.map(s => MEAL_SLOT_SHORT[s] || s).join(' · ')}</span>}
+                  </p>
                 </div>
                 <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition">
                   <button onClick={()=>{setEditMeal(m);setShowAdd(true)}} className="p-1.5 rounded-lg hover:bg-gray-100 text-gray-400"><Icon name="edit" size={14} /></button>
@@ -1157,6 +1237,12 @@ const MealLibrary = () => {
   );
 };
 
+function mealSlotsInitialSet(meal) {
+  const s = meal?.slots;
+  if (!s || !Array.isArray(s) || s.length === 0) return new Set(MEAL_SLOT_TYPES);
+  return new Set(s.filter(x => MEAL_SLOT_TYPES.includes(x)));
+}
+
 // ── MEAL FORM MODAL ─────────────────────────────────────────────
 const MealForm = ({open, onClose, meal}) => {
   const { dispatch } = useApp();
@@ -1164,6 +1250,7 @@ const MealForm = ({open, onClose, meal}) => {
   const [cuisine, setCuisine] = useState(meal?.cuisine || 'Other');
   const [prepTime, setPrepTime] = useState(meal?.prepTime || 30);
   const [tags, setTags] = useState(new Set(meal?.tags || []));
+  const [mealSlots, setMealSlots] = useState(() => mealSlotsInitialSet(meal));
   const [toddlerSafe, setToddlerSafe] = useState(meal?.toddlerSafe || false);
   const [adultOnly, setAdultOnly] = useState(meal?.adultOnly || false);
   const [link, setLink] = useState(meal?.link || '');
@@ -1171,7 +1258,10 @@ const MealForm = ({open, onClose, meal}) => {
 
   const save = () => {
     if (!name.trim()) return;
-    const data = { name: name.trim(), cuisine, prepTime, tags: [...tags], toddlerSafe, adultOnly, link: link.trim(), description: description.trim() };
+    const slotsArr = MEAL_SLOT_TYPES.filter(s => mealSlots.has(s));
+    if (slotsArr.length === 0) return;
+    const slotsField = slotsArr.length === MEAL_SLOT_TYPES.length ? [] : slotsArr;
+    const data = { name: name.trim(), cuisine, prepTime, tags: [...tags], toddlerSafe, adultOnly, link: link.trim(), description: description.trim(), slots: slotsField };
     if (meal) {
       dispatch({type:'UPDATE_MEAL', payload:{id: meal.id, ...data}});
     } else {
@@ -1181,6 +1271,11 @@ const MealForm = ({open, onClose, meal}) => {
   };
 
   const toggleTag = (t) => { const s = new Set(tags); s.has(t)?s.delete(t):s.add(t); setTags(s); };
+  const toggleMealSlot = (s) => {
+    const next = new Set(mealSlots);
+    if (next.has(s)) next.delete(s); else next.add(s);
+    setMealSlots(next);
+  };
 
   return (
     <Modal open={open} onClose={onClose} title={meal?'Edit Meal':'Add New Meal'}>
@@ -1188,6 +1283,19 @@ const MealForm = ({open, onClose, meal}) => {
         <div>
           <label className="text-sm font-medium text-gray-700 mb-1 block">Meal Name *</label>
           <input value={name} onChange={e=>setName(e.target.value)} className="w-full px-4 py-2.5 border border-gray-200 rounded-xl text-sm focus:ring-2 focus:ring-brand-500 outline-none" placeholder="e.g. Chicken Stir Fry" autoFocus />
+        </div>
+        <div>
+          <label className="text-sm font-medium text-gray-700 mb-1 block">Meal times</label>
+          <p className="text-xs text-gray-400 mb-2">When planning, this meal appears only for the slots you select. All three means any mealtime.</p>
+          <div className="flex flex-wrap gap-2">
+            {MEAL_SLOT_TYPES.map(s => (
+              <button key={s} type="button" onClick={() => toggleMealSlot(s)}
+                className={`text-xs px-3 py-1.5 rounded-full border font-medium transition capitalize ${mealSlots.has(s) ? 'bg-brand-500 text-white border-brand-500' : 'bg-white text-gray-500 border-gray-200 hover:border-gray-300'}`}>
+                {s}
+              </button>
+            ))}
+          </div>
+          {mealSlots.size === 0 && <p className="text-xs text-amber-600 mt-2">Pick at least one mealtime.</p>}
         </div>
         <div className="grid grid-cols-2 gap-3">
           <div>
@@ -1227,7 +1335,7 @@ const MealForm = ({open, onClose, meal}) => {
         </div>
         <div className="flex justify-end gap-2 pt-2">
           <button onClick={onClose} className="px-4 py-2.5 text-sm text-gray-600 hover:bg-gray-100 rounded-xl transition">Cancel</button>
-          <button onClick={save} disabled={!name.trim()} className="px-6 py-2.5 bg-brand-500 text-white rounded-xl text-sm font-medium hover:bg-brand-600 transition disabled:opacity-40">{meal?'Save Changes':'Add Meal'}</button>
+          <button onClick={save} disabled={!name.trim() || mealSlots.size === 0} className="px-6 py-2.5 bg-brand-500 text-white rounded-xl text-sm font-medium hover:bg-brand-600 transition disabled:opacity-40">{meal?'Save Changes':'Add Meal'}</button>
         </div>
       </div>
     </Modal>
